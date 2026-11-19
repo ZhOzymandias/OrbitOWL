@@ -86,6 +86,44 @@ Non trasformare esempi o possibilità in obblighi universali. Usa equivalenze
 solo quando entrambe le direzioni sono giustificate. Rispetta i domini e i
 range; non inventare cardinalità, disgiunzioni, inverse o funzionalità.
 
+RELAZIONI OPERATIVE CON EVIDENZA
+Per ogni prerequisito, condizione di applicabilità o eccezione esplicita che
+cambia come si esegue una procedura, scrivi una relazione e la relativa
+evidenza. Un commento o una gerarchia di classi da soli non rappresentano
+questa relazione. Mantieni insieme la condizione e la conseguenza prevista
+dalla fonte, compresi ambito e negazioni. Usa i predicati seguenti:
+- pc:richiedePrerequisito per ciò che deve essere verificato o disponibile prima;
+- pc:haCondizioneApplicabilita per il contesto in cui si applica la procedura;
+- pc:haEccezione per una deroga e per il comportamento previsto in quel caso.
+Per ciascun predicato usato, dichiara una owl:ObjectProperty con il suo IRI
+assoluto. Rappresenta le procedure documentate e i requisiti come individui
+nominati distinti dalle classi, con etichette leggibili. Collega gli individui
+con un'asserzione diretta e annota quella tripla con owl:Axiom. Esempio di forma:
+
+<owl:ObjectProperty rdf:about="{iri}#richiedePrerequisito"/>
+<owl:NamedIndividual rdf:about="{iri}#ProceduraA">
+  <rdfs:label xml:lang="it">Procedura A</rdfs:label>
+  <pc:richiedePrerequisito rdf:resource="{iri}#PrerequisitoB"/>
+</owl:NamedIndividual>
+<owl:NamedIndividual rdf:about="{iri}#PrerequisitoB">
+  <rdfs:label xml:lang="it">Prerequisito B</rdfs:label>
+</owl:NamedIndividual>
+<owl:Axiom>
+  <owl:annotatedSource rdf:resource="{iri}#ProceduraA"/>
+  <owl:annotatedProperty rdf:resource="{iri}#richiedePrerequisito"/>
+  <owl:annotatedTarget rdf:resource="{iri}#PrerequisitoB"/>
+  <pc:fonte>doc=ID_DOCUMENTO; page=NUMERO_PAGINA; quote=CITAZIONE_TESTUALE</pc:fonte>
+</owl:Axiom>
+
+Nell'annotazione operativa, ricopia doc dal campo document_id dell'input e
+page dal campo number della pagina PDF. Usa in quote un passaggio
+testuale breve e continuo di quella pagina che sostenga esattamente
+l'asserzione. Gli spazi e gli escape XML non cambiano le parole citate.
+Se una relazione ha più fonti, usa un pc:fonte distinto per ciascuna.
+Ometti le relazioni operative prive di evidenza testuale esplicita.
+Prima di chiudere, controlla in ogni procedura le condizioni rilevate
+nell'analisi, la tripla effettiva e l'allineamento con la citazione.
+
 PROVENIENZA E CONTROLLO PRIMA DELL'OUTPUT
 Usa etichette e, dove utili, commenti in italiano con xml:lang="it".
 Riutilizza pc:fonte e pc:livello già dichiarate. Indica il documento, la

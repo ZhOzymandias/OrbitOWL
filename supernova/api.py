@@ -51,7 +51,7 @@ class Application:
                         ready = self.ready()
                     else:
                         async with httpx.AsyncClient(timeout=5) as client:
-                            response = await client.get(os.getenv('SUPERNOVA_RUNNER_URL', 'http://runner:8080')+'/health')
+                            response = await client.get(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081')+'/health')
                             ready = response.status_code == 200
                     if self.ready is None:
                         heartbeat = Path(os.getenv('SUPERNOVA_DATA', '/data'))/'worker-heartbeat'

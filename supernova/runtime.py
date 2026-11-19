@@ -27,9 +27,10 @@ def render(history):
 
 
 class NativeRuntime:
-    def __init__(self, url, context=65536, model_digest='', transport=None):
+    def __init__(self, url, context=65536, model_digest='', transport=None, *, model='qwen3.8:27b'):
         self.url, self.context, self.model_digest = url.rstrip('/'), context, model_digest
         self.transport = transport
+        self.model = model
 
     def generate(self, history, directory, progress, *, iri):
         prompt = render(history)
@@ -84,7 +85,7 @@ class NativeRuntime:
             settings = final.get('generation_settings', {})
             if settings.get('grammar') != body['grammar'] or settings.get('grammar_lazy'):
                 raise ServiceError('ontology_grammar_not_confirmed')
-            return xml, {'model': 'qwen3.8:27b', 'model_digest': self.model_digest,
+            return xml, {'model': self.model, 'model_digest': self.model_digest,
                 'thinking': 'medium', 'context': self.context, 'num_predict': -1,
                 'grammar': 'rdfxml', 'input_tokens': len(tokens),
                 'stop_type': final.get('stop_type'), 'timings': final.get('timings', {}),

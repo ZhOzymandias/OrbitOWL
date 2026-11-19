@@ -28,8 +28,8 @@ def idle(database):
         ).fetchone() is None
 
 
-def ready(token, timeout=120, *, heartbeat=None, started_at=0):
-    request = Request("http://127.0.0.1:8090/health/ready",
+def ready(token, port, timeout=120, *, heartbeat=None, started_at=0):
+    request = Request(f"http://127.0.0.1:{port}/health/ready",
                       headers={"Authorization": f"Bearer {token}"})
     deadline = time.monotonic() + timeout
     while True:
@@ -63,27 +63,25 @@ def apply(checkout):
     if git("status", "--porcelain", "--untracked-files=no"):
         raise RuntimeError("Modifiche locali tracciate: aggiornamento sospeso.")
 
-    env_file = checkout / ".supernova/service.env"
-    values = dict(line.split("=", 1) for line in env_file.read_text().splitlines()
-                  if line.strip() and not line.lstrip().startswith("#"))
-    values = {name: json.loads(value) for name, value in values.items()}
-    database = Path(values["SUPERNOVA_DATA"]) / "jobs.sqlite3"
-    token = Path(values["SUPERNOVA_TOKEN_FILE"]).read_text().strip()
-
     def compose(*args, images=None, capture=False):
         env = os.environ.copy()
         if images:
             for service, image in images.items():
                 env[f"ORBITOWL_{service.upper()}_IMAGE"] = image
-        return command("docker", "compose", "--project-name", "sinapsia-supernova",
-                       "--env-file", str(env_file), "-f", "compose.supernova.yml",
+        return command("docker", "compose", "--project-name", "orbitowl",
+                       "--env-file", str(checkout / ".env"), "-f", "compose.yml",
                        *args, env=env, capture=capture)
 
+    api = json.loads(compose("config", "--format", "json", capture=True))["services"]["api"]
+    mounts = {m["target"]: Path(m["source"]) for m in api["volumes"]}
+    database = mounts["/data"] / "jobs.sqlite3"
+    token = mounts["/run/secrets/orbitowl_token"].read_text().strip()
+    port = int(api["environment"]["SUPERNOVA_API_PORT"])
     if not idle(database):
         print("OrbitOWL: aggiornamento in attesa, coda occupata.", flush=True)
         return
     try:
-        ready(token, timeout=0)
+        ready(token, port, timeout=0)
     except RuntimeError:
         print("OrbitOWL: aggiornamento in attesa, servizio attuale non pronto.", flush=True)
         return
@@ -97,7 +95,7 @@ def apply(checkout):
                                     container, capture=True)
 
     candidate = f"orbitowl:{revision}"
-    command("docker", "build", "-f", "Dockerfile.supernova", "-t", candidate, ".")
+    command("docker", "build", "-t", candidate, ".")
     if git("rev-parse", "HEAD") != revision or git("status", "--porcelain", "--untracked-files=no"):
         print("OrbitOWL: il codice è cambiato durante la build; riprovo al prossimo controllo.", flush=True)
         return
@@ -124,7 +122,7 @@ def apply(checkout):
         started_at = time.time()
         compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", *SERVICES,
                 images=dict.fromkeys(SERVICES, candidate))
-        ready(token, heartbeat=database.with_name("worker-heartbeat"), started_at=started_at)
+        ready(token, port, heartbeat=database.with_name("worker-heartbeat"), started_at=started_at)
     except Exception:
         if switching:
             failed.write_text(revision + "\n")

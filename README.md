@@ -1,69 +1,108 @@
 # OrbitOWL
 
-Servizio di generazione di ontologie OWL su Supernova. Riceve PDF o testo, accoda
-il lavoro, invoca il runner locale e restituisce RDF/XML con hash. Sinapsia su
-Sirio continua a inviare i lavori, validare con HermiT e importare le ontologie.
+Microservizio standalone che costruisce ontologie OWL da PDF, TXT e Markdown.
+L'API accoda i lavori, il worker interroga un motore di inferenza
+`llama-server` compatibile e restituisce RDF/XML con checksum. È utilizzabile
+da terminale o tramite HTTP, anche senza Sinapsia.
 
-- `supernova/ontology_prompt.txt` è il prompt da modificare.
-- `supernova/` contiene API, coda, worker e adattatore al runner.
-- `compose.supernova.yml` esegue API e worker sul progetto Compose esistente.
-- `tests/` contiene i test del servizio e dell'aggiornamento.
+## Prima installazione
 
-Il ramo di lavoro e di rilascio è `main`. Non creare rami aggiuntivi senza
-richiesta esplicita. Il formato delle richieste e la revisione dell'API sono
-quelli già usati da Sinapsia. Nessun cambio di configurazione su Sirio.
+Su Linux servono Git, Python 3, Docker con Compose e un motore di inferenza
+compatibile. OrbitOWL non scarica i pesi né avvia un modello. Il runner deve
+supportare `/health`, `/tokenize` e `/completion` con grammatica GBNF ed eventi
+SSE nativi (compresa la conferma della grammatica). Il modello deve supportare
+il formato ChatML con fine del ragionamento `</think>`; il profilo di partenza
+è Qwen3.8:27b. Un endpoint Ollama /api/chat, da solo, non è compatibile.
 
-## Passaggio dal servizio esistente a OrbitOWL
-
-Su Supernova, come `trooperai`, dopo aver pubblicato il repository privato:
+Per avere un runner dedicato su questo host, un esempio da adattare alla GPU è:
 
 ```bash
-git clone https://github.com/ZhOzymandias/OrbitOWL.git ~/OrbitOWL
-cd ~/OrbitOWL
+llama-server -m /percorso/modello.gguf --host 127.0.0.1 --port 18081 -c 65536 -np 1 -ngl 999
+```
+
+Poi avvia OrbitOWL:
+
+```bash
+git clone https://github.com/ZhOzymandias/OrbitOWL.git
+cd OrbitOWL
+python3 scripts/setup.py
+sudo docker compose up -d --build
+python3 -m scripts.client ready
+```
+
+`setup.py` crea `.env` e un token casuale in `.orbitowl/api-token`; crea anche
+`.orbitowl/data` per coda e risultati. Se li esegui una seconda volta, il
+setup conserva token e configurazione. Il token non appare nel file `.env`.
+Puoi modificare `.env` usando [l'esempio](.env.example) come riferimento.
+I valori principali sono `ORBITOWL_PORT` (8110) e `ORBITOWL_RUNNER_URL`
+(`http://127.0.0.1:18081`). Imposta `ORBITOWL_CONTEXT` al contesto realmente
+usato dal runner. `ORBITOWL_MODEL` è un'etichetta per i report: il modello
+effettivo e la verifica dei pesi sono responsabilità di chi gestisce il runner.
+
+L'API ascolta solo sull'indirizzo locale. Per accedervi dall'esterno usa un
+proxy HTTPS o un tunnel privato. Non pubblicare il token, la cartella dati
+o l'endpoint del runner. Se Docker è già accessibile al tuo account puoi
+omettere `sudo` nei comandi Docker.
+
+## Uso senza Sinapsia
+
+```bash
+python3 -m scripts.client submit manuale.pdf
+python3 -m scripts.client status ID_JOB
+python3 -m scripts.client download ID_JOB risultato.owl
+```
+
+Il primo comando mostra l'ID del lavoro. Scarica l'OWL quando lo stato è
+`completed`. Il client controlla lo SHA-256 prima di salvare. Per un indirizzo
+o un token diversi, passa `--url` e `--token-file` prima del sottocomando.
+OrbitOWL verifica RDF/XML; consistenza inferenziale e fedeltà alle fonti
+richiedono controlli separati.
+
+| Metodo e percorso | Funzione |
+| --- | --- |
+| GET `/health/live` | Processo HTTP raggiungibile |
+| GET `/health/ready` | Runner raggiungibile e worker pronto |
+| POST `/v1/ontology-jobs` | Accetta ZIP con manifest e originali; richiede `Idempotency-Key` |
+| GET `/v1/ontology-jobs/{id}` | Stato e diagnostica del lavoro |
+| GET `/v1/ontology-jobs/{id}/artifact` | RDF/XML con header `X-Artifact-SHA256` |
+| POST `/v1/ontology-jobs/{id}/cancel` | Richiede l'annullamento |
+
+Tutti gli endpoint tranne `/health/live` richiedono il token Bearer.
+Il client è anche un esempio di come preparare un archivio per l'API.
+
+## Aggiornamenti con git pull
+
+Su un host Linux con systemd, dopo la prima installazione attiva l'aggiornamento
+automatico **una sola volta**:
+
+```bash
 ./scripts/install_pull_updates.sh
 ```
 
-Per il clone privato usa credenziali GitHub già configurate o una chiave di deploy
-di sola lettura e il corrispondente URL SSH. Lo script richiede sudo per registrare
-l'aggiornamento automatico. L'installazione esistente deve essere avviata e pronta.
-Lo script collega la configurazione privata già presente in
-`~/sinapsia-supernova/.supernova`. Il progetto Compose continua a chiamarsi
-`sinapsia-supernova` per sostituire i container API e worker esistenti sulla
-stessa porta. Il runner GPU resta gestito dalla sua unità systemd attuale.
+Il meccanismo serve una sola checkout per host. Da quel momento, fai solo
+`git pull` nella cartella OrbitOWL. Entro circa un minuto il sistema rileva il
+nuovo commit locale di `main`, attende che la coda sia libera, costruisce
+l'immagine e sostituisce API e worker. L'API può essere brevemente indisponibile.
+Per controllare l'esito usa `sudo journalctl -u orbitowl-update.service -n 45`.
+Senza systemd puoi aggiornare quando non ci sono job in corso con
+`git pull` seguito da `sudo docker compose up -d --build`.
 
-**Mantieni la vecchia cartella.** Contiene dati, token e configurazione del
-runner. L'aggiornamento non rimuove o riscarica i pesi e non avvia inferenze.
-Non lanciare due copie del servizio. Il prompt attivo dopo l'adozione è 3.2.
+L'installatore copia il coordinatore in una directory di sistema. Se aggiorni
+quel coordinatore stesso, riesegui l'installatore una volta. Cambiamenti al
+runner e alla configurazione locale hanno un ciclo distinto dal codice.
 
-## Uso quotidiano
+## Integrazione facoltativa con Sinapsia
 
-Su Supernova:
+Sinapsia può usare OrbitOWL perché il contratto HTTP è lo stesso. Configura
+sul client l'indirizzo raggiungibile e il nuovo token, usando il file privato.
+Per provare OrbitOWL accanto a un servizio esistente, mantieni progetti Compose,
+porte, token e directory dati separati. Se entrambi puntano al medesimo
+runner con un solo slot, evita di avviare contemporaneamente due generazioni.
 
-```bash
-cd ~/OrbitOWL
-git pull
-```
+## Sviluppo
 
-Entro circa un minuto systemd rileva il nuovo commit locale e applica
-l'aggiornamento se API e runner sono pronti. Se ci sono job in coda o attivi,
-controlla di nuovo al giro successivo. Prima prepara l'immagine, poi sostituisce
-solo API e worker. Il sistema non scarica commit da solo. I riavvii del runner e
-le modifiche ai pesi o al contesto restano operazioni di infrastruttura separate.
-Durante la sostituzione l'API può essere brevemente indisponibile.
-
-Per verificare lo stato o diagnosticare un eventuale errore:
-
-```bash
-sudo journalctl -u orbitowl-update.service -n 45 --no-pager
-```
-
-Dopo un errore durante la sostituzione, l'aggiornamento prova a rimettere le
-immagini precedenti se la coda è libera. Il commit fallito resta sospeso fino
-al pull di un commit diverso. Dati e coda sono condivisi con la vecchia
-installazione. Il pacchetto è stato testato localmente senza Docker/GPU;
-la prima adozione su Supernova è il collaudo operativo.
-
-## Verifica locale
+Il prompt è in [supernova/ontology_prompt.txt](supernova/ontology_prompt.txt).
+Il ramo di lavoro è `main`; non creare altri rami senza richiesta esplicita.
 
 Con Python 3.12:
 

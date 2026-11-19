@@ -10,17 +10,13 @@ from scripts import apply_update
 def server(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     checkout = tmp_path / "repo"
-    config = checkout / ".supernova"
+    config = checkout / ".orbitowl"
     config.mkdir(parents=True)
     token = config / "token"
     token.write_text("test")
     database = config / "jobs.sqlite3"
     with sqlite3.connect(database) as conn:
         conn.execute("CREATE TABLE jobs (status TEXT)")
-    (config / "service.env").write_text(
-        f"SUPERNOVA_DATA={json.dumps(str(config))}\n"
-        f"SUPERNOVA_TOKEN_FILE={json.dumps(str(token))}\n"
-    )
     state = tmp_path / "state"
     state.mkdir()
     monkeypatch.setattr(apply_update, "STATE", state)
@@ -30,6 +26,12 @@ def server(monkeypatch, tmp_path):
         calls.append((args, kwargs.get("env", {})))
         if args[0] == "git":
             return {"branch": "main", "rev-parse": "a" * 40, "status": ""}[args[3]]
+        if "config" in args:
+            return json.dumps({"services": {"api": {
+                "environment": {"SUPERNOVA_API_PORT": "8119"},
+                "volumes": [{"target": "/data", "source": str(config)},
+                            {"target": "/run/secrets/orbitowl_token", "source": str(token)}],
+            }}})
         if "ps" in args:
             return args[-1] + "-container"
         if "inspect" in args:
@@ -45,7 +47,7 @@ def test_queued_work_defers_update(server):
     with sqlite3.connect(database) as conn:
         conn.execute("INSERT INTO jobs VALUES ('queued')")
     apply_update.apply(checkout)
-    assert all(args[0] == "git" for args, _ in calls)
+    assert not any("build" in args or "stop" in args for args, _ in calls)
     assert not (state / "applied").exists()
 
 
@@ -73,7 +75,8 @@ def test_success_and_already_applied(server):
 def test_unready_candidate_restores_previous_images(server, monkeypatch):
     checkout, _, state, calls = server
 
-    def ready(token, timeout=120, **kwargs):
+    def ready(token, port, timeout=120, **kwargs):
+        assert port == 8119
         if timeout:
             raise RuntimeError("not ready")
 

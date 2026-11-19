@@ -6,12 +6,7 @@ cd -- "$root"
 [[ "$EUID" -ne 0 ]] || { echo "Esegui lo script come proprietario del clone, senza sudo."; exit 1; }
 [[ "$(git branch --show-current)" == main ]] || { echo "Il clone deve essere su main."; exit 1; }
 [[ "$root" =~ ^/[a-zA-Z0-9._/-]+$ ]] || { echo "Usa un percorso senza spazi."; exit 1; }
-legacy="${1:-$HOME/sinapsia-supernova}/.supernova"
-test -r "$legacy/service.env"
-if [[ ! -e .supernova && ! -L .supernova ]]; then
-    ln -s "$(realpath "$legacy")" .supernova
-fi
-[[ "$(realpath .supernova)" == "$(realpath "$legacy")" ]] || { echo "Configurazione esistente diversa."; exit 1; }
+test -r .env || { echo "Prima esegui python3 scripts/setup.py."; exit 1; }
 git config --local pull.ff only
 
 sudo install -d -m 0755 /usr/local/lib/orbitowl

@@ -1,9 +1,7 @@
 """One GPU worker, durable queue and raw output. Never repeats interrupted inference."""
 import fcntl
-import hashlib
 import os
 import time
-from pathlib import Path
 
 from . import SERVICE_REVISION
 from .artifacts import normalize
@@ -63,17 +61,9 @@ def main():
         (store.root/'worker-heartbeat').unlink(missing_ok=True)
         (store.root/'worker-revision').write_text(SERVICE_REVISION, encoding='ascii')
         store.recover_interrupted()
-        path = Path(os.environ['SUPERNOVA_MODEL_PATH'])
-        expected = os.environ['SUPERNOVA_MODEL_SHA256']
-        hasher = hashlib.sha256()
-        with path.open('rb') as model:
-            for chunk in iter(lambda: model.read(8*1024*1024), b''):
-                hasher.update(chunk)
-        if hasher.hexdigest() != expected:
-            raise SystemExit('Model checksum mismatch; no generation started')
-        runtime = NativeRuntime(os.getenv('SUPERNOVA_RUNNER_URL', 'http://runner:8080'),
+        runtime = NativeRuntime(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081'),
                                 context=int(os.getenv('SUPERNOVA_CONTEXT', '65536')),
-                                model_digest=expected)
+                                model=os.getenv('ORBITOWL_MODEL', 'qwen3.8:27b'))
         while True:
             (store.root/'worker-heartbeat').touch()
             if not run_once(store, runtime):

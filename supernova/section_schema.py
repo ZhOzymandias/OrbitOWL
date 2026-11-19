@@ -18,7 +18,7 @@ VALUE_KINDS = {"text", "integer", "decimal", "boolean"}
 LIMITS = {"entities": 14, "relations": 12, "attributes": 8}
 
 GRAMMAR = r'''
-root ::= ws ( "{" ws "\"status\"" sep "\"split\"" ws "}" | complete ) ws
+root ::= ws complete ws
 complete ::= "{" ws "\"status\"" sep "\"complete\"" comma "\"entities\"" sep entities comma "\"relations\"" sep relations comma "\"attributes\"" sep attributes ws "}"
 entities ::= "[" ws ( entity (comma entity){0,13} )? ws "]"
 relations ::= "[" ws ( relation (comma relation){0,11} )? ws "]"
@@ -45,8 +45,8 @@ def identity(value):
 
 
 def validate_section(data, source):
-    if isinstance(data, dict) and data == {"status": "split"}:
-        raise ServiceError("section_split_requested")
+    if isinstance(data, dict) and data.get("status") == "split":
+        raise ServiceError("section_output_contract_violation")
     if not isinstance(data, dict) or set(data) != {"status", *LIMITS} or data["status"] != "complete":
         raise ServiceError("section_schema_invalid")
     if any(not isinstance(data[k], list) or len(data[k]) > n for k, n in LIMITS.items()):

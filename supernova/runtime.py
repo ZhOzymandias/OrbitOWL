@@ -9,8 +9,8 @@ import httpx
 from .contracts import ServiceError, canonical, sha256
 from .section_schema import GRAMMAR, decode_section
 
-REVISION = 'structured-sections-1.2'
-EXTRACTION_REVISION = 'structured-sections-1.1'
+REVISION = 'structured-sections-1.3'
+EXTRACTION_REVISION = 'structured-sections-1.3'
 PROMPT_PATH = Path(__file__).with_name('section_prompt.txt')
 SECTION_OUTPUT_TOKENS = 4096
 MAX_SECTION_BYTES = 65536

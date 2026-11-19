@@ -163,7 +163,7 @@ def test_saturated_558_character_section_can_split_beyond_two_levels(tmp_path):
     assert all(x['full_lists'] == {'entities': LIMITS['entities']} for x in diagnostics)
 
 
-def test_model_split_request_has_a_durable_attempt_budget(tmp_path, monkeypatch):
+def test_saturation_has_a_durable_attempt_budget(tmp_path, monkeypatch):
     class Runner:
         signature = 'test'
 
@@ -172,7 +172,7 @@ def test_model_split_request_has_a_durable_attempt_budget(tmp_path, monkeypatch)
 
         def generate_section(self, section, directory, progress):
             self.calls += 1
-            return {'status': 'split'}
+            raise ServiceError('section_capacity_reached', details={'full_lists': {'entities': 14}})
 
     monkeypatch.setattr('supernova.pipeline.MAX_SECTION_ATTEMPTS', 2)
     runner = Runner()
@@ -184,5 +184,26 @@ def test_model_split_request_has_a_durable_attempt_budget(tmp_path, monkeypatch)
             build_ontology(runner, sources, tmp_path, events.append, iri='urn:test:budget')
         assert events[-1]['failed_section']['attempts'] == 2
     assert runner.calls == 2
-    assert events[1]['last_split']['error'] == 'section_split_requested'
-    assert 'full_lists' not in events[1]['last_split']
+    assert events[1]['last_split']['error'] == 'section_capacity_reached'
+    assert events[1]['last_split']['full_lists'] == {'entities': 14}
+
+
+def test_model_split_response_is_a_contract_error_and_cannot_fan_out(tmp_path):
+    class Runner:
+        signature = 'test'
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate_section(self, section, directory, progress):
+            self.calls += 1
+            return {'status': 'split'}
+
+    runner = Runner()
+    text = 'Verifica i collegamenti. ' * 40
+    sources = [{'document_id': 'manuale', 'filename': 'test.txt', 'pages': [{'number': 1, 'text': text}]}]
+    events = []
+    with pytest.raises(ServiceError, match='section_output_contract_violation'):
+        build_ontology(runner, sources, tmp_path, events.append, iri='urn:test:output-contract')
+    assert runner.calls == 1
+    assert not any('last_split' in event for event in events)

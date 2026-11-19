@@ -8,7 +8,7 @@ from test_service import package, packed
 from supernova.compiler import compile_owl
 from supernova.contracts import ServiceError, sha256
 from supernova.pipeline import build_ontology
-from supernova.section_schema import validate_section
+from supernova.section_schema import LIMITS, validate_section
 from supernova.store import Store
 from supernova.worker import run_once
 
@@ -132,3 +132,57 @@ def test_class_attribute_retains_qualified_source_without_a_datatype_assertion()
     data['attributes'][0]['source'] = 'unknown'
     with pytest.raises(ServiceError, match='section_attribute_entity_unknown'):
         validate_section(data, quote)
+
+
+def test_saturated_558_character_section_can_split_beyond_two_levels(tmp_path):
+    class Runner:
+        signature = 'test'
+
+        def generate_section(self, section, directory, progress):
+            text = section['text']
+            if len(text) > 100:
+                return {
+                    'status': 'complete',
+                    'entities': [
+                        {'id': f'a{i}', 'kind': 'class', 'label': f'Entità {i}', 'scope': ''}
+                        for i in range(LIMITS['entities'])
+                    ],
+                    'relations': [],
+                    'attributes': [],
+                }
+            return structured(text.strip())
+
+    text = ('Prima del riavvio, controlla che i collegamenti siano integri. ' * 12)[:558]
+    sources = [{'document_id': 'manuale', 'filename': 'test.txt', 'pages': [{'number': 2, 'text': text}]}]
+    events = []
+    _, report = build_ontology(Runner(), sources, tmp_path, events.append, iri='urn:test:density')
+    assert report['sections_completed'] > 4
+    assert report['sections_completed'] == report['sections_total']
+    diagnostics = [event['last_split'] for event in events if 'last_split' in event]
+    assert all(x['error'] == 'section_capacity_reached' for x in diagnostics)
+    assert all(x['full_lists'] == {'entities': LIMITS['entities']} for x in diagnostics)
+
+
+def test_model_split_request_has_a_durable_attempt_budget(tmp_path, monkeypatch):
+    class Runner:
+        signature = 'test'
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate_section(self, section, directory, progress):
+            self.calls += 1
+            return {'status': 'split'}
+
+    monkeypatch.setattr('supernova.pipeline.MAX_SECTION_ATTEMPTS', 2)
+    runner = Runner()
+    events = []
+    text = 'Prima del riavvio controlla i collegamenti. ' * 13
+    sources = [{'document_id': 'manuale', 'filename': 'test.txt', 'pages': [{'number': 1, 'text': text}]}]
+    for _ in range(2):
+        with pytest.raises(ServiceError, match='section_attempt_budget_exhausted'):
+            build_ontology(runner, sources, tmp_path, events.append, iri='urn:test:budget')
+        assert events[-1]['failed_section']['attempts'] == 2
+    assert runner.calls == 2
+    assert events[1]['last_split']['error'] == 'section_split_requested'
+    assert 'full_lists' not in events[1]['last_split']

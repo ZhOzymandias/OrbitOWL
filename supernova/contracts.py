@@ -14,8 +14,9 @@ MAX_FILES = 64
 
 
 class ServiceError(Exception):
-    def __init__(self, code, status=422):
+    def __init__(self, code, status=422, *, details=None):
         self.code, self.status = code, status
+        self.details = details or {}
         super().__init__(code)
 
 

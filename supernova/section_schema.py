@@ -52,8 +52,9 @@ def validate_section(data, source):
     if any(not isinstance(data[k], list) or len(data[k]) > n for k, n in LIMITS.items()):
         raise ServiceError("section_schema_invalid")
     # An answer at a grammar limit may have omitted information to fit the array.
-    if any(len(data[k]) == n for k, n in LIMITS.items()):
-        raise ServiceError("section_split_requested")
+    full = {key: limit for key, limit in LIMITS.items() if len(data[key]) == limit}
+    if full:
+        raise ServiceError("section_capacity_reached", details={"full_lists": full})
 
     def record(row, fields):
         if not isinstance(row, dict) or set(row) != set(fields.split()) or any(

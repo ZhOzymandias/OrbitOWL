@@ -97,10 +97,13 @@ runner e alla configurazione locale hanno un ciclo distinto dal codice.
 Il worker divide il testo di ogni pagina in sezioni sovrapposte e invia al
 runner una richiesta JSON vincolata per sezione. Verifica la presenza testuale
 delle citazioni e salva le sezioni accettate in `<job-id>/sections/`. Una
-sezione troncata o non valida può essere suddivisa fino a due volte.
+sezione troncata, non valida o con una lista piena viene divisa lungo
+un confine testuale. Il worker preferisce paragrafi e frasi, anche oltre
+due livelli. Ogni sezione iniziale e le sue suddivisioni condividono
+un massimo di 32 invocazioni, conteggiate anche dopo un riavvio.
 Un errore temporaneo del runner consente un solo nuovo tentativo della
-stessa sezione. Il report indica documento, pagina e intervallo di caratteri
-della sezione che ha esaurito questi tentativi.
+stessa sezione. Il report indica documento, pagina, intervallo e motivo
+dell'arresto. In caso di lista piena indica anche quale ha raggiunto il limite.
 
 Dopo un'interruzione del worker, i job in corso di questa pipeline tornano in
 coda. A parità di configurazione e testo il worker riusa le sezioni validate.

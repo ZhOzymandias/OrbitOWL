@@ -12,12 +12,12 @@ from .section_schema import decode_section, validate_section
 
 SECTION_CHARS = 2400
 OVERLAP_CHARS = 240
-MIN_SPLIT_CHARS = 300
-MAX_SPLIT_DEPTH = 2
+MIN_CHILD_CHARS = 24
+MAX_SECTION_ATTEMPTS = 32
 SPLIT_ERRORS = {
     'section_context_capacity_exceeded', 'section_output_limit', 'section_json_invalid',
     'section_schema_invalid', 'section_quote_not_found', 'section_attribute_value_invalid',
-    'section_split_requested', 'section_relation_types_invalid',
+    'section_split_requested', 'section_capacity_reached', 'section_relation_types_invalid',
     'section_relation_entity_unknown', 'section_relation_fields_invalid',
     'section_attribute_entity_unknown', 'section_attribute_fields_invalid',
 }
@@ -49,13 +49,32 @@ def sections(sources):
                 start = end - OVERLAP_CHARS
 
 
-def split(section):
-    text = section['text']
+def legacy_split_offsets(text):
     middle = len(text) // 2
     boundaries = [m.end() for m in re.finditer(r'\s+', text) if middle // 2 < m.end() < middle * 3 // 2]
     point = min(boundaries, key=lambda value: abs(value-middle), default=middle)
     overlap = min(OVERLAP_CHARS // 2, len(text) // 8)
-    left_end, right_start = point+overlap, point-overlap
+    return point+overlap, point-overlap
+
+
+def split_offsets(text):
+    middle = len(text) // 2
+    minimum = max(MIN_CHILD_CHARS, len(text) // 4)
+    for boundary in (r"\n[ \t]*\n+", r"(?<=[.!?;:])\s+", r"\s+"):
+        offsets = [m.end() for m in re.finditer(boundary, text)
+                   if minimum <= m.end() <= len(text)-minimum
+                   and text[:m.end()].strip() and text[m.end():].strip()]
+        if offsets:
+            point = min(offsets, key=lambda offset: abs(offset-middle))
+            # Include a little context only when breaking within a sentence.
+            overlap = min(len(text) // 10, 48) if boundary == r"\s+" else 0
+            return point+overlap, point-overlap
+    return None
+
+
+def split(section, offsets):
+    text = section['text']
+    left_end, right_start = offsets
     return (
         {**section, 'end': section['start']+left_end, 'text': text[:left_end]},
         {**section, 'start': section['start']+right_start, 'text': text[right_start:]},
@@ -70,8 +89,13 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
              'sections_reused': 0, 'sections_split': 0, 'section_retries': 0}
     results = []
 
-    def generate(section, folder):
+    def generate(section, folder, budget):
         for attempt in range(2):
+            used = decode_section(budget.read_text(encoding='utf-8')) if budget.exists() else 0
+            if used >= MAX_SECTION_ATTEMPTS:
+                raise ServiceError('section_attempt_budget_exhausted',
+                                   details={'attempts': used, 'limit': MAX_SECTION_ATTEMPTS})
+            atomic_json(budget, used + 1)
             try:
                 return runtime.generate_section(section, folder, progress)
             except httpx.HTTPStatusError as exc:
@@ -89,7 +113,7 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
             stats['section_retries'] += 1
             progress(stats)
 
-    def read_one(section, depth):
+    def read_one(section, budget):
         key = sha256(canonical([runtime.signature, section]))
         folder = root / key
         folder.mkdir(exist_ok=True, mode=0o700)
@@ -100,34 +124,42 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
         if split_flag.exists():
             stats['sections_split'] += 1
             stats['sections_total'] += 1
-            for part in split(section):
-                read_one(part, depth+1)
+            saved = decode_section(split_flag.read_text(encoding='utf-8'))
+            offsets = saved.get('offsets') or legacy_split_offsets(section['text'])
+            for part in split(section, offsets):
+                read_one(part, budget)
             return
         try:
             if completed.exists():
                 data = validate_section(decode_section(completed.read_text(encoding='utf-8')), section['text'])
                 stats['sections_reused'] += 1
             else:
-                generated = generate(section, folder)
+                generated = generate(section, folder, budget)
                 data = validate_section(generated, section['text'])
                 atomic_json(completed, data)
         except ServiceError as exc:
-            if exc.code not in SPLIT_ERRORS or depth >= MAX_SPLIT_DEPTH or len(section['text']) < MIN_SPLIT_CHARS:
+            offsets = split_offsets(section['text']) if exc.code in SPLIT_ERRORS else None
+            if offsets is None:
                 if exc.code != 'job_cancelled':
-                    progress({'failed_section': {**location, 'error': exc.code}})
+                    failed = {**location, 'error': exc.code, **exc.details}
+                    if exc.code in SPLIT_ERRORS:
+                        failed['stop_reason'] = 'no_useful_text_boundary'
+                    progress({'failed_section': failed})
                 raise
-            atomic_json(split_flag, {'trigger': exc.code})
+            atomic_json(split_flag, {'trigger': exc.code, 'offsets': offsets, **exc.details})
             stats['sections_split'] += 1
             stats['sections_total'] += 1
-            for part in split(section):
-                read_one(part, depth+1)
+            progress({**stats, 'last_split': {**location, 'error': exc.code, **exc.details}})
+            for part in split(section, offsets):
+                read_one(part, budget)
             return
         results.append((section, data))
         stats['sections_completed'] += 1
         progress(stats)
 
     for section in planned:
-        read_one(section, 0)
+        key = sha256(canonical([runtime.signature, section]))
+        read_one(section, root / f'{key}.attempts.json')
     progress({'stage': 'compiling', 'section': None})
     xml, counts = compile_owl(iri, results)
     return xml, {'prompt_revision': REVISION, **stats, **counts}

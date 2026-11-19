@@ -9,7 +9,8 @@ import httpx
 from .contracts import ServiceError, canonical, sha256
 from .section_schema import GRAMMAR, decode_section
 
-REVISION = 'structured-sections-1.1'
+REVISION = 'structured-sections-1.2'
+EXTRACTION_REVISION = 'structured-sections-1.1'
 PROMPT_PATH = Path(__file__).with_name('section_prompt.txt')
 SECTION_OUTPUT_TOKENS = 4096
 MAX_SECTION_BYTES = 65536
@@ -21,7 +22,9 @@ class NativeRuntime:
         self.transport = transport
         self.model = model
         self.prompt = PROMPT_PATH.read_text(encoding='utf-8').strip()
-        self.signature = sha256(canonical([REVISION, self.prompt, GRAMMAR, model, model_digest, context]))
+        self.signature = sha256(canonical([
+            EXTRACTION_REVISION, self.prompt, GRAMMAR, model, model_digest, context,
+        ]))
 
     def generate_section(self, section, directory, progress):
         # The tokenizer parses ChatML markers only from the template.

@@ -72,6 +72,16 @@ Non creare restrizioni staccate al livello radice, né copie nominate di quelle
 già annidate. Non usare owl:SubClassOf, owl:Declaration o owl:EquivalentClasses:
 sono costrutti OWL/XML. Gli esempi mostrano la sintassi, non assiomi da copiare.
 Distingui classi, individui, proprietà oggetto, proprietà dati e annotazioni.
+Usa owl:unionOf e owl:intersectionOf solo per combinare almeno due espressioni.
+Scrivi i membri direttamente nel tag con rdf:parseType="Collection", ognuno
+come owl:Class, owl:Restriction o rdfs:Datatype secondo il suo tipo. Esempio:
+<owl:unionOf rdf:parseType="Collection">
+  <owl:Class rdf:about="{iri}#PrimaClasse"/>
+  <owl:Class rdf:about="{iri}#SecondaClasse"/>
+</owl:unionOf>
+Usa rdf:about sul singolo membro quando è nominato. Non mettere rdf:resource
+su owl:unionOf o owl:intersectionOf. Per una sola classe usa un riferimento
+diretto nell'assioma, senza creare unione o intersezione.
 Non trasformare esempi o possibilità in obblighi universali. Usa equivalenze
 solo quando entrambe le direzioni sono giustificate. Rispetta i domini e i
 range; non inventare cardinalità, disgiunzioni, inverse o funzionalità.

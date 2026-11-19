@@ -10,7 +10,7 @@ from .contracts import ServiceError, canonical
 from .documents import source_text
 from .owl_grammar import owl_grammar
 
-REVISION = 'direct-original-files-3.2'
+REVISION = 'direct-original-files-3.3'
 PROMPT_PATH = Path(__file__).with_name('ontology_prompt.txt')
 
 

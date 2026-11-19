@@ -32,6 +32,7 @@ COLLECTIONS = {
     'owl:members', 'owl:distinctMembers', 'owl:propertyChainAxiom', 'owl:hasKey',
     'owl:withRestrictions',
 }
+CLASS_EXPRESSION_LISTS = {'owl:intersectionOf', 'owl:unionOf'}
 LITERALS = {
     'rdfs:label', 'rdfs:comment', 'owl:versionInfo', 'owl:deprecated',
     'owl:cardinality', 'owl:minCardinality', 'owl:maxCardinality',
@@ -65,6 +66,8 @@ def owl_grammar(iri):
         opening, closing = terminal('<' + tag), terminal('</' + tag + '>')
         if tag in NODES:
             form = 'node-id? ws ("/>" | ">" ws (property ws)* ' + closing + ')'
+        elif tag in CLASS_EXPRESSION_LISTS:
+            form = 'collection ws ">" ws expression ws expression ws (expression ws)* ' + closing
         elif tag in COLLECTIONS:
             form = '(resource ws "/>" | collection ws ">" ws (node ws)* ' + closing
             form += ' | ws ">" ws node ws ' + closing + ')'
@@ -92,6 +95,7 @@ name ::= [A-Za-z_] [A-Za-z0-9_.-]*
 node-id ::= space ("rdf:about=\"" iri "\"" | "rdf:nodeID=\"" name "\"")
 resource ::= space ("rdf:resource=\"" iri "\"" | "rdf:nodeID=\"" name "\"")
 collection ::= space "rdf:parseType=\"Collection\""
+expression ::= owl-Class | owl-Restriction | rdfs-Datatype
 literal-meta ::= space ("xml:lang=\"" [A-Za-z]+ ("-" [A-Za-z0-9]+)* "\"" | "rdf:datatype=\"" iri "\"")
 iri ::= ("http://" | "https://" | "urn:") ([a-zA-Z0-9_~:/?#@!$'()*+,;=.-] | "%" [0-9a-fA-F] [0-9a-fA-F] | "&amp;")+
 custom-resource ::= "<pc:" name resource ws "/>"

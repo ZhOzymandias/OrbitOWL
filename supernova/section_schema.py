@@ -84,10 +84,11 @@ def validate_section(data, source):
         source_kind = entities.get(relation["source"])
         target_kind = entities.get(relation["target"])
         kind = relation["kind"]
-        if (not source_kind or not target_kind or kind not in RELATION_KINDS
-                or len(relation["label"]) > 120
+        if not source_kind or not target_kind:
+            raise ServiceError("section_relation_entity_unknown")
+        if (kind not in RELATION_KINDS or len(relation["label"]) > 120
                 or (kind == "relation" and not clean(relation["label"]))):
-            raise ServiceError("section_schema_invalid")
+            raise ServiceError("section_relation_fields_invalid")
         if ((kind == "subclass" and (source_kind, target_kind) != ("class", "class"))
                 or (kind == "type" and not (source_kind != "class" and target_kind == "class"))
                 or (kind == "relation" and (source_kind == "class") != (target_kind == "class"))
@@ -98,10 +99,11 @@ def validate_section(data, source):
     for attribute in data["attributes"]:
         record(attribute, "source label type value quote")
         kind, value = attribute["type"], attribute["value"]
-        if (entities.get(attribute["source"]) not in {"individual", "procedure"}
-                or not clean(attribute["label"]) or not clean(value)
+        if attribute["source"] not in entities:
+            raise ServiceError("section_attribute_entity_unknown")
+        if (not clean(attribute["label"]) or not clean(value)
                 or max(len(attribute["label"]), len(value)) > 120 or kind not in VALUE_KINDS):
-            raise ServiceError("section_schema_invalid")
+            raise ServiceError("section_attribute_fields_invalid")
         try:
             valid_value = (
                 re.fullmatch(r"[+-]?[0-9]+", value) if kind == "integer" else

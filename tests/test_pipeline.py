@@ -5,8 +5,10 @@ import pytest
 from rdflib import OWL, RDF, Graph, Namespace
 from test_service import package, packed
 
+from supernova.compiler import compile_owl
 from supernova.contracts import ServiceError, sha256
 from supernova.pipeline import build_ontology
+from supernova.section_schema import validate_section
 from supernova.store import Store
 from supernova.worker import run_once
 
@@ -105,3 +107,28 @@ def test_output_limit_splits_only_the_failed_section_and_keeps_scopes(tmp_path):
     assert len(set(graph.subjects(RDF.type, OWL.NamedIndividual))) == 4
     again = build_ontology(runner, docs, tmp_path, lambda update: None, iri=iri)[1]
     assert again['sections_reused'] == 3 and runner.calls == {1: 1, 2: 3}
+
+
+def test_class_attribute_retains_qualified_source_without_a_datatype_assertion():
+    quote = 'Un HDD desktop è spesso da 3,5 pollici.'
+    data = {
+        'status': 'complete',
+        'entities': [{'id': 'a1', 'kind': 'class', 'label': 'HDD desktop', 'scope': ''}],
+        'relations': [],
+        'attributes': [{'source': 'a1', 'label': 'dimensione', 'type': 'text',
+                        'value': '3,5 pollici', 'quote': quote}],
+    }
+    validate_section(data, quote)
+    iri = 'urn:test:class-attribute'
+    xml, _ = compile_owl(iri, [({'document_id': 'document', 'page': 2}, data)])
+    graph = Graph().parse(data=xml, format='xml')
+    subject, = graph.subjects(RDF.type, OWL.Class)
+    prop, = (p for p, o in graph.predicate_objects(subject) if str(o) == quote)
+    assert (prop, RDF.type, OWL.AnnotationProperty) in graph
+    assert not list(graph.subjects(RDF.type, OWL.DatatypeProperty))
+    axiom, = graph.subjects(OWL.annotatedSource, subject)
+    assert str(graph.value(axiom, Namespace(iri+'#').fonte)) == f'doc=document; page=2; quote={quote}'
+
+    data['attributes'][0]['source'] = 'unknown'
+    with pytest.raises(ServiceError, match='section_attribute_entity_unknown'):
+        validate_section(data, quote)

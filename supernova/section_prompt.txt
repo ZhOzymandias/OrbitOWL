@@ -29,9 +29,12 @@ a prerequisiti, condizioni ed eccezioni espliciti. Conserva ambito, negazioni
 e conseguenze nelle etichette quando sono essenziali. Non inventare nessi.
 
 attributes: ogni oggetto ha source, label, type, value, quote, in quest'ordine.
-source è un individual o una procedure, label nomina l'attributo, type è text,
-integer, decimal o boolean. value è sempre una stringa JSON, con punto decimale
-o "true"/"false" quando il tipo lo richiede.
+source è un id presente in entities. Un attributo riferito a una class è
+una descrizione: conserva nella quote parole come "spesso" o "in genere".
+Per un individual o una procedure estrai qui solamente valori documentati
+come fatti sul singolo elemento. label nomina l'attributo. type è text,
+integer, decimal o boolean. value è sempre una stringa JSON, con punto
+decimale o "true"/"false" quando il tipo lo richiede.
 
 Per ogni relazione e attributo, quote è un passaggio breve, continuo e testuale
 della sezione che sostiene il fatto. Mantieni le parole originali, comprese

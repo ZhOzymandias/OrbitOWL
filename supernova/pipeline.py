@@ -18,6 +18,8 @@ SPLIT_ERRORS = {
     'section_context_capacity_exceeded', 'section_output_limit', 'section_json_invalid',
     'section_schema_invalid', 'section_quote_not_found', 'section_attribute_value_invalid',
     'section_split_requested', 'section_relation_types_invalid',
+    'section_relation_entity_unknown', 'section_relation_fields_invalid',
+    'section_attribute_entity_unknown', 'section_attribute_fields_invalid',
 }
 RETRY_ERRORS = {'section_transport_error', 'section_model_runtime_error', 'section_stream_incomplete'}
 

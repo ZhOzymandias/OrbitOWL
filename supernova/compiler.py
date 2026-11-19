@@ -80,12 +80,18 @@ def compile_owl(iri, sections):
                 operational.add(triple)
 
         for row in data['attributes']:
-            source, _ = local[row['source']]
+            source, source_kind = local[row['source']]
             label = clean(row['label'])
-            prop = ns['a_' + digest(identity(label))]
-            graph.add((prop, RDF.type, OWL.DatatypeProperty))
+            key = digest(identity(label))
+            if source_kind == 'class':
+                # Keep qualifiers such as "often" in the descriptive assertion.
+                prop, property_kind = ns['d_' + key], OWL.AnnotationProperty
+                value = Literal(clean(row['quote']))
+            else:
+                prop, property_kind = ns['a_' + key], OWL.DatatypeProperty
+                value = Literal(clean(row['value']), datatype=VALUE_TYPES.get(row['type']))
+            graph.add((prop, RDF.type, property_kind))
             graph.add((prop, RDFS.label, Literal(label)))
-            value = Literal(clean(row['value']), datatype=VALUE_TYPES.get(row['type']))
             annotate((source, prop, value), section, row['quote'])
 
     if not entities:

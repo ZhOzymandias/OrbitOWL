@@ -1,0 +1,10 @@
+.supernova
+.env
+secrets/
+*.owl
+*.zip
+*.sqlite3*
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv/

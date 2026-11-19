@@ -1,0 +1,5 @@
+*
+!requirements.supernova.lock
+!supernova/
+!supernova/**
+supernova/**/__pycache__/

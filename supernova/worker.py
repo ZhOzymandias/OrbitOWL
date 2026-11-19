@@ -1,4 +1,4 @@
-"""One GPU worker, durable queue and raw output. Never repeats interrupted inference."""
+"""Single GPU worker with durable section checkpoints."""
 import fcntl
 import os
 import time
@@ -7,7 +7,8 @@ from . import SERVICE_REVISION
 from .artifacts import normalize
 from .contracts import ServiceError, canonical, sha256
 from .documents import extract
-from .runtime import NativeRuntime, messages
+from .pipeline import build_ontology
+from .runtime import REVISION, NativeRuntime
 from .store import Store
 
 
@@ -19,7 +20,7 @@ def run_once(store, runtime):
     directory = store.directory(job_id)
     report = {'engine': 'supernova-owl-v1', 'service_revision': SERVICE_REVISION, 'semantic_review': 'not_performed',
               'logical_check': 'not_run', 'input_mode': 'independent_original_files',
-              'visual_content_processed': False}
+              'visual_content_processed': False, 'pipeline_revision': REVISION}
     try:
         manifest, sources = extract((directory/'input.zip').read_bytes())
         iri = 'urn:sinapsia:ontology:'+job_id
@@ -35,20 +36,22 @@ def run_once(store, runtime):
             report.update(update)
             store.update(job_id, report=report)
 
-        progress({})
-        xml, usage = runtime.generate(messages(sources, iri), directory, progress, iri=iri)
+        progress({'stage': 'extracting_sections'})
+        xml, usage = build_ontology(runtime, sources, directory, progress, iri=iri)
         progress({})
         store.update(job_id, phase='normalizing')
         xml, checks = normalize(xml, expected_iri=iri, strict=True)
+        progress({})
         (directory/'ontology.tmp').write_text(xml, encoding='utf-8')
         (directory/'ontology.tmp').replace(directory/'ontology.owl')
-        report.update(checks, generation=usage, artifact_ready=True)
+        report.update(checks, generation=usage, artifact_ready=True, output_bytes=len(xml.encode()),
+                      stage='completed')
         store.update(job_id, status='completed', phase='completed', report=report,
                      artifact_sha256=sha256(xml.encode()))
     except ServiceError as exc:
         store.update(job_id, status='cancelled' if exc.code == 'job_cancelled' else 'failed',
                      error=exc.code, report=report)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Do not put corpus text or model responses into service/API logs.
         store.update(job_id, status='failed', error='generation_technical_error', report=report)
     return True

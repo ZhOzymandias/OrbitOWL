@@ -1,29 +1,18 @@
-"""Stable native llama-server transport: no /proc discovery or Ollama child ports."""
+"""Native llama-server transport for one bounded, schema-constrained section."""
+
 import json
 import time
 from pathlib import Path
 
 import httpx
 
-from .artifacts import MAX_ARTIFACT_BYTES
-from .contracts import ServiceError, canonical
-from .documents import source_text
-from .owl_grammar import owl_grammar
+from .contracts import ServiceError, canonical, sha256
+from .section_schema import GRAMMAR, decode_section
 
-REVISION = 'direct-original-files-3.4'
-PROMPT_PATH = Path(__file__).with_name('ontology_prompt.txt')
-
-
-def messages(sources, iri):
-    system = PROMPT_PATH.read_text(encoding='utf-8').replace('{iri}', iri).strip()
-    return [{'role': 'system', 'content': system},
-            {'role': 'user', 'content': 'DOCUMENTI COMPLETI:\n'+source_text(sources)}]
-
-
-def render(history):
-    # Explicit medium: thinking is open, no xhigh instruction, matching Qwen3.8 ChatML.
-    return ''.join('<|im_start|>'+m['role']+'\n'+m['content']+'<|im_end|>\n'
-                   for m in history)+'<|im_start|>assistant\n<think>\n'
+REVISION = 'structured-sections-1.0'
+PROMPT_PATH = Path(__file__).with_name('section_prompt.txt')
+SECTION_OUTPUT_TOKENS = 4096
+MAX_SECTION_BYTES = 65536
 
 
 class NativeRuntime:
@@ -31,63 +20,61 @@ class NativeRuntime:
         self.url, self.context, self.model_digest = url.rstrip('/'), context, model_digest
         self.transport = transport
         self.model = model
+        self.prompt = PROMPT_PATH.read_text(encoding='utf-8').strip()
+        self.signature = sha256(canonical([REVISION, self.prompt, GRAMMAR, model, model_digest, context]))
 
-    def generate(self, history, directory, progress, *, iri):
-        prompt = render(history)
-        with httpx.Client(base_url=self.url, timeout=15, transport=self.transport) as client:
-            response = client.post('/tokenize', json={'content': prompt, 'add_special': False, 'parse_special': True})
+    def generate_section(self, section, directory, progress):
+        # The tokenizer parses ChatML markers only from the template.
+        user = json.dumps(section, ensure_ascii=False).replace('<', r'\u003c')
+        prompt = (f'<|im_start|>system\n{self.prompt}<|im_end|>\n'
+                  f'<|im_start|>user\n{user}<|im_end|>\n'
+                  '<|im_start|>assistant\n<think>\n\n</think>\n\n')
+        with httpx.Client(base_url=self.url, timeout=90, transport=self.transport) as client:
+            response = client.post('/tokenize', json={
+                'content': prompt, 'add_special': False, 'parse_special': True})
             response.raise_for_status()
             tokens = response.json()['tokens']
-            if not tokens or len(tokens)+4096 > self.context:
-                raise ServiceError('context_capacity_exceeded')
-            body = {'prompt': tokens, 'n_predict': -1, 'stream': True, 'cache_prompt': True,
-                    'ignore_eos': False, 'stop': [], 'return_tokens': True, 'grammar': owl_grammar(iri),
-                    'temperature': 0.6, 'top_p': 0.95, 'top_k': 20, 'min_p': 0,
-                    'repeat_penalty': 1, 'presence_penalty': 0}
-            (directory/'request.json').write_bytes(canonical({'revision': REVISION, 'messages': history,
-                'options': {k: v for k, v in body.items() if k != 'prompt'}}))
-            final, total, last = None, 0, time.monotonic()
-            started = last
-            with (directory/'raw-response.txt').open('w', encoding='utf-8') as raw, \
-                    (directory/'native-stream.jsonl').open('w', encoding='utf-8') as log, \
-                    client.stream('POST', '/completion', json=body, timeout=None) as response:
+            if not tokens or len(tokens) + SECTION_OUTPUT_TOKENS > self.context:
+                raise ServiceError('section_context_capacity_exceeded')
+            body = {
+                'prompt': tokens, 'n_predict': SECTION_OUTPUT_TOKENS, 'stream': True,
+                'cache_prompt': True, 'ignore_eos': False, 'stop': [], 'return_tokens': True,
+                'grammar': GRAMMAR, 'temperature': 0, 'top_p': 1, 'top_k': 1,
+            }
+            final, size = None, 0
+            last = time.monotonic()
+            progress({'section_input_tokens': len(tokens), 'section_output_bytes': 0})
+            with (directory/'response.json.part').open('w', encoding='utf-8') as raw, \
+                    client.stream('POST', '/completion', json=body) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line.startswith('data:') or line[5:].strip() == '[DONE]':
                         continue
                     event = json.loads(line[5:])
-                    log.write(json.dumps(event, ensure_ascii=False)+'\n')
-                    log.flush()
+                    if event.get('error'):
+                        raise ServiceError('section_model_runtime_error')
                     content = event.get('content', '')
-                    total += len(content.encode())
-                    if total > MAX_ARTIFACT_BYTES:
-                        raise ServiceError('artifact_byte_limit')
+                    size += len(content.encode())
+                    if size > MAX_SECTION_BYTES:
+                        raise ServiceError('section_output_limit')
                     raw.write(content)
                     raw.flush()
-                    if event.get('error'):
-                        raise ServiceError('model_runtime_error')
-                    if time.monotonic()-last >= 1:
-                        progress({'output_bytes': total, 'input_tokens': len(tokens)})
+                    if time.monotonic() - last >= 1:
+                        progress({'section_output_bytes': size})
                         last = time.monotonic()
                     if event.get('stop'):
                         final = event
                         break
-            if not final:
-                raise ServiceError('stream_ended_without_final')
-            (directory/'native-final.json').write_bytes(canonical(final))
-            text = (directory/'raw-response.txt').read_bytes().decode('utf-8')
-            thinking, separator, xml = text.partition('</think>')
-            if not separator or final.get('truncated') or not xml.rstrip().endswith('</rdf:RDF>'):
-                raise ServiceError('ontology_generation_incomplete')
-            (directory/'thinking.txt').write_text(thinking, encoding='utf-8')
-            xml = xml.lstrip()
-            (directory/'original.owl').write_bytes(xml.encode('utf-8'))
+            if final is None:
+                raise ServiceError('section_stream_incomplete')
+            (directory/'native-final.json').write_bytes(canonical({
+                key: final.get(key) for key in
+                ('stop_type', 'truncated', 'tokens_evaluated', 'tokens_predicted', 'timings')
+            }))
+            if final.get('truncated') or final.get('stop_type') == 'limit':
+                raise ServiceError('section_output_limit')
             settings = final.get('generation_settings', {})
-            if settings.get('grammar') != body['grammar'] or settings.get('grammar_lazy'):
-                raise ServiceError('ontology_grammar_not_confirmed')
-            return xml, {'model': self.model, 'model_digest': self.model_digest,
-                'thinking': 'medium', 'context': self.context, 'num_predict': -1,
-                'grammar': 'rdfxml', 'input_tokens': len(tokens),
-                'stop_type': final.get('stop_type'), 'timings': final.get('timings', {}),
-                'wall_seconds': time.monotonic()-started,
-                'prompt_revision': REVISION}
+            if settings.get('grammar') != GRAMMAR or settings.get('grammar_lazy'):
+                raise ServiceError('section_grammar_not_confirmed')
+            progress({'section_output_bytes': size})
+            return decode_section((directory/'response.json.part').read_text(encoding='utf-8'))

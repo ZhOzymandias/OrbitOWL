@@ -15,7 +15,7 @@ from supernova.api import Application
 from supernova.artifacts import normalize
 from supernova.contracts import ServiceError, canonical, sha256, validate_bundle
 from supernova.documents import extract
-from supernova.runtime import NativeRuntime, messages
+from supernova.runtime import SECTION_OUTPUT_TOKENS, NativeRuntime
 from supernova.store import Store
 from supernova.worker import run_once
 
@@ -110,59 +110,72 @@ def test_authenticated_api_and_artifact_state(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('bad_entity', [False, True])
-def test_worker_native_stream_preserves_output_and_rejects_invalid_xml(tmp_path, bad_entity):
+@pytest.mark.parametrize('bad_quote', [False, True])
+def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
     data, manifest = package()
     store = Store(tmp_path)
     store.submit(data, manifest['build_id'])
-    iri = 'urn:sinapsia:ontology:'+manifest['build_id']
-    xml = ontology_xml(iri)
-    if bad_entity:
-        xml = xml.replace('rdf:about="' + iri + '#Entita"', 'rdf:about="&xsd;string"')
+    key = manifest['build_id']
     calls = []
+    output = {
+        'status': 'complete',
+        'entities': [
+            {'id': 'p', 'kind': 'procedure', 'label': 'Procedura', 'scope': ''},
+            {'id': 'r', 'kind': 'individual', 'label': 'Requisito', 'scope': ''},
+        ],
+        'relations': [
+            {'source': 'p', 'kind': 'prerequisite', 'label': '', 'target': 'r',
+             'quote': 'Non è nel PDF' if bad_quote else 'ONLY ORIGINAL PDF CONTENT'},
+        ],
+        'attributes': [],
+    }
+
     def transport(request):
         body = json.loads(request.content)
         if request.url.path == '/tokenize':
             assert 'ONLY ORIGINAL PDF CONTENT' in body['content']
             return httpx.Response(200, json={'tokens': [1, 2, 3]})
         calls.append(body)
-        assert body['ignore_eos'] is False and body['n_predict'] == -1
-        assert body['stop'] == []
-        assert body['grammar'].startswith('root ::= reasoning')
-        events = [{'content': 'Thinking mentions </rdf:RDF> but is not the answer.'},
-                  {'content': '\n</think>\n'+xml.removesuffix('</rdf:RDF>')},
-                  {'content': '</rdf:'}, {'content': 'RDF>'},
-                  {'stop': True, 'stop_type': 'eos',
-                   'truncated': False, 'generation_settings': {'grammar': body['grammar']}}]
+        assert body['ignore_eos'] is False and body['n_predict'] == SECTION_OUTPUT_TOKENS
+        assert body['grammar'].startswith('root ::= ws')
+        text = json.dumps(output)
+        events = [
+            {'content': text[:49]}, {'content': text[49:]},
+            {'stop': True, 'stop_type': 'eos', 'truncated': False,
+             'generation_settings': {'grammar': body['grammar']}},
+        ]
         return httpx.Response(200, content=''.join('data: '+json.dumps(e)+'\n\n' for e in events))
+
     runtime = NativeRuntime('http://runner', transport=httpx.MockTransport(transport), model_digest='test')
     assert run_once(store, runtime)
-    result = store.get(manifest['build_id'])
-    directory = store.directory(manifest['build_id'])
-    assert (directory/'original.owl').read_text() == xml
-    assert (directory/'native-final.json').exists()
+    result = store.get(key)
+    directory = store.directory(key)
+    assert len(list((directory/'sections').glob('*/native-final.json'))) == 1
     assert not run_once(store, runtime) and len(calls) == 1
-    if bad_entity:
-        assert (result['status'], result['error']) == ('failed', 'invalid_xml')
+    if bad_quote:
+        assert (result['status'], result['error']) == ('failed', 'section_quote_not_found')
+        assert result['report']['failed_section']['page'] == 1
         assert not (directory/'ontology.owl').exists()
         return
     assert result['status'] == 'completed'
+    assert result['report']['generation']['operational_relations'] == 1
+    assert result['report']['unasserted_axiom_annotations'] == 0
     assert result['report']['logical_check'] == 'not_run'
-    assert result['report']['visual_content_processed'] is False
-    assert (directory/'ontology.owl').read_text() == xml
+    assert b'ONLY ORIGINAL PDF CONTENT' in (directory/'ontology.owl').read_bytes()
     assert sha256((directory/'ontology.owl').read_bytes()) == result['artifact_sha256']
 
 
-def test_native_missing_eos_override_is_not_claimed_complete(tmp_path):
-    iri = 'urn:test:supernova'
+def test_section_runner_truncation_does_not_create_a_validated_checkpoint(tmp_path):
     def transport(request):
         if request.url.path == '/tokenize':
             return httpx.Response(200, json={'tokens': [1]})
-        return httpx.Response(200, content='data: '+json.dumps({'stop': True, 'stop_type': 'eos'})+'\n\n')
+        final = {'stop': True, 'stop_type': 'limit', 'truncated': True}
+        return httpx.Response(200, content='data: '+json.dumps(final)+'\n\n')
     runtime = NativeRuntime('http://runner', transport=httpx.MockTransport(transport))
-    with pytest.raises(ServiceError, match='generation_incomplete'):
-        runtime.generate(messages([], iri), tmp_path, lambda _: None, iri=iri)
+    with pytest.raises(ServiceError, match='section_output_limit'):
+        runtime.generate_section({'text': 'Esempio'}, tmp_path, lambda _: None)
     assert (tmp_path/'native-final.json').exists()
+    assert not (tmp_path/'validated.json').exists()
 
 
 def test_context_overflow_never_starts_inference(tmp_path):
@@ -170,8 +183,8 @@ def test_context_overflow_never_starts_inference(tmp_path):
         assert request.url.path == '/tokenize'
         return httpx.Response(200, json={'tokens': [1]*3000})
     runtime = NativeRuntime('http://runner', context=4096, transport=httpx.MockTransport(transport))
-    with pytest.raises(ServiceError, match='context_capacity_exceeded'):
-        runtime.generate(messages([], 'urn:test'), tmp_path, lambda _: None, iri='urn:test')
+    with pytest.raises(ServiceError, match='section_context_capacity_exceeded'):
+        runtime.generate_section({'text': 'Esempio'}, tmp_path, lambda _: None)
 
 
 def test_imports_and_entities_are_rejected_and_normalization_is_mechanical():

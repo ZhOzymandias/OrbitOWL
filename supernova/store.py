@@ -91,6 +91,13 @@ class Store:
         return self.get(job_id)
 
     def recover_interrupted(self):
-        # Called only after obtaining the exclusive worker lock; never regenerate uncertain work.
+        # Called only under the exclusive worker lock. Legacy jobs have no section checkpoints.
         with self.connect() as db:
-            db.execute("UPDATE jobs SET status='failed',error='worker_interrupted',updated_at=? WHERE status='running'", (time.time(),))
+            now = time.time()
+            db.execute("""UPDATE jobs SET status='cancelled',phase='cancelled',error='job_cancelled',
+                        updated_at=? WHERE status='running' AND cancel_requested=1""", (now,))
+            db.execute("""UPDATE jobs SET status='queued',phase='queued',error='',updated_at=?
+                        WHERE status='running' AND json_extract(report,'$.pipeline_revision')
+                        LIKE 'structured-sections-%'""", (now,))
+            db.execute("""UPDATE jobs SET status='failed',error='worker_interrupted',updated_at=?
+                        WHERE status='running'""", (now,))

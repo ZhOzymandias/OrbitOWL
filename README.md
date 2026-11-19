@@ -2,7 +2,8 @@
 
 Microservizio standalone che costruisce ontologie OWL da PDF, TXT e Markdown.
 L'API accoda i lavori, il worker interroga un motore di inferenza
-`llama-server` compatibile e restituisce RDF/XML con checksum. È utilizzabile
+`llama-server` compatibile per estrarre sezioni con fonti testuali e restituisce
+RDF/XML compilato con checksum. È utilizzabile
 da terminale o tramite HTTP, anche senza Sinapsia.
 
 ## Prima installazione
@@ -11,7 +12,7 @@ Su Linux servono Git, Python 3, Docker con Compose e un motore di inferenza
 compatibile. OrbitOWL non scarica i pesi né avvia un modello. Il runner deve
 supportare `/health`, `/tokenize` e `/completion` con grammatica GBNF ed eventi
 SSE nativi (compresa la conferma della grammatica). Il modello deve supportare
-il formato ChatML con fine del ragionamento `</think>`; il profilo di partenza
+il formato ChatML con un blocco di ragionamento già chiuso. Il profilo di partenza
 è Qwen3.8:27b. Un endpoint Ollama /api/chat, da solo, non è compatibile.
 
 Per avere un runner dedicato su questo host, un esempio da adattare alla GPU è:
@@ -91,6 +92,24 @@ L'installatore copia il coordinatore in una directory di sistema. Se aggiorni
 quel coordinatore stesso, riesegui l'installatore una volta. Cambiamenti al
 runner e alla configurazione locale hanno un ciclo distinto dal codice.
 
+## Generazione per sezioni
+
+Il worker divide il testo di ogni pagina in sezioni sovrapposte e invia al
+runner una richiesta JSON vincolata per sezione. Verifica la presenza testuale
+delle citazioni e salva le sezioni accettate in `<job-id>/sections/`. Una
+sezione troncata o non valida può essere suddivisa fino a due volte.
+Un errore temporaneo del runner consente un solo nuovo tentativo della
+stessa sezione. Il report indica documento, pagina e intervallo di caratteri
+della sezione che ha esaurito questi tentativi.
+
+Dopo un'interruzione del worker, i job in corso di questa pipeline tornano in
+coda. A parità di configurazione e testo il worker riusa le sezioni validate.
+Il compilatore riconcilia le entità con lo stesso tipo, etichetta normalizzata
+e ambito. Le relazioni conservano ID documento, pagina PDF e citazione
+sull'assioma. La verifica del testo citato è automatica. La pertinenza
+semantica della citazione richiede revisione. Sinapsia esegue il controllo
+OWL 2 DL e HermiT prima di attivare la release.
+
 ## Integrazione facoltativa con Sinapsia
 
 Sinapsia può usare OrbitOWL perché il contratto HTTP è lo stesso. Configura
@@ -101,7 +120,7 @@ runner con un solo slot, evita di avviare contemporaneamente due generazioni.
 
 ## Sviluppo
 
-Il prompt è in [supernova/ontology_prompt.txt](supernova/ontology_prompt.txt).
+Il prompt è in [supernova/section_prompt.txt](supernova/section_prompt.txt).
 Il ramo di lavoro è `main`; non creare altri rami senza richiesta esplicita.
 
 Con Python 3.12:

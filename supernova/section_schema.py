@@ -1,0 +1,130 @@
+"""Bounded section output and validation against the original text."""
+
+import json
+import re
+import unicodedata
+from decimal import Decimal, InvalidOperation
+
+from .contracts import ServiceError
+
+PREDICATES = {
+    "prerequisite": "richiedePrerequisito",
+    "condition": "haCondizioneApplicabilita",
+    "exception": "haEccezione",
+}
+ENTITY_KINDS = {"class", "individual", "procedure"}
+RELATION_KINDS = {"subclass", "type", "relation", *PREDICATES}
+VALUE_KINDS = {"text", "integer", "decimal", "boolean"}
+LIMITS = {"entities": 14, "relations": 12, "attributes": 8}
+
+GRAMMAR = r'''
+root ::= ws ( "{" ws "\"status\"" sep "\"split\"" ws "}" | complete ) ws
+complete ::= "{" ws "\"status\"" sep "\"complete\"" comma "\"entities\"" sep entities comma "\"relations\"" sep relations comma "\"attributes\"" sep attributes ws "}"
+entities ::= "[" ws ( entity (comma entity){0,13} )? ws "]"
+relations ::= "[" ws ( relation (comma relation){0,11} )? ws "]"
+attributes ::= "[" ws ( attribute (comma attribute){0,7} )? ws "]"
+entity ::= "{" ws "\"id\"" sep key comma "\"kind\"" sep ("\"class\"" | "\"individual\"" | "\"procedure\"") comma "\"label\"" sep short comma "\"scope\"" sep short ws "}"
+relation ::= "{" ws "\"source\"" sep key comma "\"kind\"" sep ("\"subclass\"" | "\"type\"" | "\"relation\"" | "\"prerequisite\"" | "\"condition\"" | "\"exception\"") comma "\"label\"" sep short comma "\"target\"" sep key comma "\"quote\"" sep quote ws "}"
+attribute ::= "{" ws "\"source\"" sep key comma "\"label\"" sep short comma "\"type\"" sep ("\"text\"" | "\"integer\"" | "\"decimal\"" | "\"boolean\"") comma "\"value\"" sep short comma "\"quote\"" sep quote ws "}"
+key ::= "\"" [a-z] [a-z0-9_]{0,15} "\""
+short ::= "\"" char{0,120} "\""
+quote ::= "\"" char{1,360} "\""
+char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})
+comma ::= ws "," ws
+sep ::= ws ":" ws
+ws ::= [ \t\n\r]{0,8}
+'''.strip()
+
+
+def clean(value):
+    return " ".join(unicodedata.normalize("NFC", value).split())
+
+
+def identity(value):
+    return unicodedata.normalize("NFKC", clean(value)).casefold()
+
+
+def validate_section(data, source):
+    if isinstance(data, dict) and data == {"status": "split"}:
+        raise ServiceError("section_split_requested")
+    if not isinstance(data, dict) or set(data) != {"status", *LIMITS} or data["status"] != "complete":
+        raise ServiceError("section_schema_invalid")
+    if any(not isinstance(data[k], list) or len(data[k]) > n for k, n in LIMITS.items()):
+        raise ServiceError("section_schema_invalid")
+    # An answer at a grammar limit may have omitted information to fit the array.
+    if any(len(data[k]) == n for k, n in LIMITS.items()):
+        raise ServiceError("section_split_requested")
+
+    def record(row, fields):
+        if not isinstance(row, dict) or set(row) != set(fields.split()) or any(
+            not isinstance(s, str) or any(
+                ord(c) < 32 and c not in "\t\n\r" or 0xD800 <= ord(c) <= 0xDFFF
+                or ord(c) in (0xFFFE, 0xFFFF) for c in s
+            ) for s in row.values()
+        ):
+            raise ServiceError("section_schema_invalid")
+
+    entities = {}
+    for entity in data["entities"]:
+        record(entity, "id kind label scope")
+        key = entity["id"]
+        if (not re.fullmatch(r"[a-z][a-z0-9_]{0,15}", key) or key in entities
+                or entity["kind"] not in ENTITY_KINDS or not clean(entity["label"])
+                or max(len(entity["label"]), len(entity["scope"])) > 120):
+            raise ServiceError("section_schema_invalid")
+        entities[key] = entity["kind"]
+
+    def evidence(row):
+        quote = clean(row["quote"])
+        if not quote or len(row["quote"]) > 360 or quote not in clean(source):
+            raise ServiceError("section_quote_not_found")
+
+    for relation in data["relations"]:
+        record(relation, "source kind label target quote")
+        source_kind = entities.get(relation["source"])
+        target_kind = entities.get(relation["target"])
+        kind = relation["kind"]
+        if (not source_kind or not target_kind or kind not in RELATION_KINDS
+                or len(relation["label"]) > 120
+                or (kind == "relation" and not clean(relation["label"]))):
+            raise ServiceError("section_schema_invalid")
+        if ((kind == "subclass" and (source_kind, target_kind) != ("class", "class"))
+                or (kind == "type" and not (source_kind != "class" and target_kind == "class"))
+                or (kind == "relation" and (source_kind == "class") != (target_kind == "class"))
+                or (kind in PREDICATES and (source_kind != "procedure" or target_kind == "class"))):
+            raise ServiceError("section_relation_types_invalid")
+        evidence(relation)
+
+    for attribute in data["attributes"]:
+        record(attribute, "source label type value quote")
+        kind, value = attribute["type"], attribute["value"]
+        if (entities.get(attribute["source"]) not in {"individual", "procedure"}
+                or not clean(attribute["label"]) or not clean(value)
+                or max(len(attribute["label"]), len(value)) > 120 or kind not in VALUE_KINDS):
+            raise ServiceError("section_schema_invalid")
+        try:
+            valid_value = (
+                re.fullmatch(r"[+-]?[0-9]+", value) if kind == "integer" else
+                re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", value)
+                and Decimal(value).is_finite() if kind == "decimal" else
+                value in {"true", "false"} if kind == "boolean" else True
+            )
+        except InvalidOperation:
+            valid_value = False
+        if not valid_value:
+            raise ServiceError("section_attribute_value_invalid")
+        evidence(attribute)
+    return data
+
+
+def decode_section(text):
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise ValueError("duplicate key")
+        return value
+
+    try:
+        return json.loads(text, object_pairs_hook=unique)
+    except ValueError as exc:
+        raise ServiceError("section_json_invalid") from exc

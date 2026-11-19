@@ -1,6 +1,5 @@
 """Extraction performed on Supernova from the original received file bytes."""
 import io
-import json
 import zipfile
 from pathlib import PurePosixPath
 
@@ -39,8 +38,3 @@ def extract(data):
                             'sha256': doc['sha256'],
                             'pages': [{'number': i, 'text': text} for i, text in enumerate(pages, 1)]})
     return manifest, sources
-
-
-def source_text(sources):
-    # JSON escaping keeps document boundaries explicit; document content remains untrusted data.
-    return json.dumps(sources, ensure_ascii=False)

@@ -5,3 +5,10 @@ sono condizioni, eccezioni o prerequisiti. Assegna ID locali univoci come a1.
 Ogni entità ha id, kind, label, scope. Usa class per categorie, individual
 per elementi o requisiti distinti, procedure per operazioni documentate.
 Usa etichette esplicite e scope per distinguere contesti diversi.
+
+Concentrati sul contenuto del dominio. Tralascia intestazioni e piè di pagina,
+recapiti, numeri di pagina, firme, crediti e registri di revisione che descrivono
+soltanto il documento. Conserva i ruoli, le date, le versioni e i dati tabellari
+quando definiscono requisiti, responsabilità, condizioni o altri fatti del
+dominio. Se la sezione contiene soltanto metadati editoriali, restituisci
+{"entities": []}.

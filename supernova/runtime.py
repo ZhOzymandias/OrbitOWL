@@ -9,7 +9,7 @@ import httpx
 from .contracts import ServiceError, canonical, sha256
 from .section_schema import GRAMMAR, decode_section, entity_grammar, fact_grammar, validate_section
 
-REVISION = 'structured-sections-1.6'
+REVISION = 'structured-sections-1.6.1'
 PREVIOUS_REVISIONS = ('structured-sections-1.2', 'structured-sections-1.3', 'structured-sections-1.4')
 PROMPT_PATH = Path(__file__).with_name('section_prompt.txt')
 SECTION_OUTPUT_TOKENS = 4096

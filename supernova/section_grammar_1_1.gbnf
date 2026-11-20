@@ -1,0 +1,15 @@
+root ::= ws ( "{" ws "\"status\"" sep "\"split\"" ws "}" | complete ) ws
+complete ::= "{" ws "\"status\"" sep "\"complete\"" comma "\"entities\"" sep entities comma "\"relations\"" sep relations comma "\"attributes\"" sep attributes ws "}"
+entities ::= "[" ws ( entity (comma entity){0,13} )? ws "]"
+relations ::= "[" ws ( relation (comma relation){0,11} )? ws "]"
+attributes ::= "[" ws ( attribute (comma attribute){0,7} )? ws "]"
+entity ::= "{" ws "\"id\"" sep key comma "\"kind\"" sep ("\"class\"" | "\"individual\"" | "\"procedure\"") comma "\"label\"" sep short comma "\"scope\"" sep short ws "}"
+relation ::= "{" ws "\"source\"" sep key comma "\"kind\"" sep ("\"subclass\"" | "\"type\"" | "\"relation\"" | "\"prerequisite\"" | "\"condition\"" | "\"exception\"") comma "\"label\"" sep short comma "\"target\"" sep key comma "\"quote\"" sep quote ws "}"
+attribute ::= "{" ws "\"source\"" sep key comma "\"label\"" sep short comma "\"type\"" sep ("\"text\"" | "\"integer\"" | "\"decimal\"" | "\"boolean\"") comma "\"value\"" sep short comma "\"quote\"" sep quote ws "}"
+key ::= "\"" [a-z] [a-z0-9_]{0,15} "\""
+short ::= "\"" char{0,120} "\""
+quote ::= "\"" char{1,360} "\""
+char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})
+comma ::= ws "," ws
+sep ::= ws ":" ws
+ws ::= [ \t\n\r]{0,8}

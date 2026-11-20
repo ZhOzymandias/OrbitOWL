@@ -25,6 +25,13 @@ source e target sono id presenti in entities. kind ammette:
   verificato prima;
 - condition: procedure verso condizione che ne limita l'applicabilità;
 - exception: procedure verso eccezione con la circostanza e la conseguenza.
+Per prerequisite, condition ed exception, source deve avere kind "procedure"
+e target deve avere kind "individual" oppure "procedure". Una condizione,
+un requisito o un'eccezione specifici si possono rappresentare come individual
+se documentati come entità distinte. Non cambiare il tipo di una categoria
+solo per creare una relazione; se non puoi rappresentarla fedelmente, omettila.
+Prima di rispondere, verifica che tutti gli ID usati siano dichiarati e che
+le citazioni compaiano nella sezione come passaggi continui.
 Per subclass, type e le tre relazioni operative metti label "". Dai priorità
 a prerequisiti, condizioni ed eccezioni espliciti. Conserva ambito, negazioni
 e conseguenze nelle etichette quando sono essenziali. Non inventare nessi.

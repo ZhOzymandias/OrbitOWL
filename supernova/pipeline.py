@@ -15,11 +15,11 @@ OVERLAP_CHARS = 240
 MIN_CHILD_CHARS = 24
 MAX_SECTION_ATTEMPTS = 32
 SPLIT_ERRORS = {
-    'section_context_capacity_exceeded', 'section_output_limit', 'section_json_invalid',
-    'section_schema_invalid', 'section_quote_not_found', 'section_attribute_value_invalid',
-    'section_capacity_reached', 'section_relation_types_invalid',
-    'section_relation_entity_unknown', 'section_relation_fields_invalid',
-    'section_attribute_entity_unknown', 'section_attribute_fields_invalid',
+    'section_context_capacity_exceeded', 'section_output_limit', 'section_capacity_reached',
+}
+CORRECTION_ERRORS = {
+    'section_quote_not_found', 'section_relation_types_invalid',
+    'section_relation_entity_unknown', 'section_attribute_entity_unknown',
 }
 RETRY_ERRORS = {'section_transport_error', 'section_model_runtime_error', 'section_stream_incomplete'}
 
@@ -81,22 +81,51 @@ def split(section, offsets):
     )
 
 
-def build_ontology(runtime, sources, directory, progress, *, iri):
+def saved_split(marker, section):
+    saved = decode_section(marker.read_text(encoding='utf-8'))
+    return split(section, saved.get('offsets') or legacy_split_offsets(section['text']))
+
+
+def count_reusable_sections(signature, sources, directory):
+    root = Path(directory) / 'sections'
+
+    def count(section):
+        folder = root / sha256(canonical([signature, section]))
+        marker = folder / 'split.json'
+        if marker.is_file():
+            return sum(count(child) for child in saved_split(marker, section))
+        checkpoint = folder / 'validated.json'
+        if not checkpoint.is_file():
+            return 0
+        try:
+            validate_section(decode_section(checkpoint.read_text(encoding='utf-8')), section['text'])
+        except ServiceError:
+            return 0
+        return 1
+
+    return sum(count(section) for section in sections(sources))
+
+
+def build_ontology(runtime, sources, directory, progress, *, iri, previous_signature=None):
     root = Path(directory) / 'sections'
     root.mkdir(exist_ok=True, mode=0o700)
     planned = list(sections(sources))
     stats = {'sections_total': len(planned), 'sections_completed': 0,
-             'sections_reused': 0, 'sections_split': 0, 'section_retries': 0}
+             'sections_reused': 0, 'sections_split': 0, 'section_retries': 0,
+             'section_corrections': 0}
     results = []
 
-    def generate(section, folder, budget):
-        for attempt in range(2):
+    def generate(section, folder, budget, *, correction=None):
+        attempts = 1 if correction is not None else 2
+        for attempt in range(attempts):
             used = decode_section(budget.read_text(encoding='utf-8')) if budget.exists() else 0
             if used >= MAX_SECTION_ATTEMPTS:
                 raise ServiceError('section_attempt_budget_exhausted',
                                    details={'attempts': used, 'limit': MAX_SECTION_ATTEMPTS})
             atomic_json(budget, used + 1)
             try:
+                if correction is not None:
+                    return runtime.generate_section(section, folder, progress, correction=correction)
                 return runtime.generate_section(section, folder, progress)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500 and exc.response.status_code != 429:
@@ -108,10 +137,43 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
                 if exc.code not in RETRY_ERRORS:
                     raise
                 error = exc
-            if attempt:
+            if attempt + 1 == attempts:
                 raise error
             stats['section_retries'] += 1
             progress(stats)
+
+    def extract_section(section, folder, budget):
+        marker = folder / 'correction.json'
+        if marker.exists():
+            failure = decode_section(marker.read_text(encoding='utf-8'))
+            raise ServiceError('section_correction_failed', details=failure)
+        generated = generate(section, folder, budget)
+        try:
+            return validate_section(generated, section['text'])
+        except ServiceError as exc:
+            if exc.code not in CORRECTION_ERRORS:
+                raise
+            issue = {'code': exc.code, **exc.details}
+        # A restart must not buy another correction for the same span.
+        failure = {'original_error': issue, 'correction_error': {'code': 'section_correction_interrupted'}}
+        atomic_json(marker, failure)
+        correction_dir = folder / 'correction'
+        correction_dir.mkdir(exist_ok=True, mode=0o700)
+        stats['section_corrections'] += 1
+        progress(stats)
+        try:
+            corrected = generate(section, correction_dir, budget,
+                                 correction={'issue': issue, 'previous': generated})
+            data = validate_section(corrected, section['text'])
+            if not (data['relations'] or data['attributes']):
+                raise ServiceError('section_correction_removed_all_facts')
+            return data
+        except ServiceError as exc:
+            if exc.code == 'job_cancelled':
+                raise
+            failure['correction_error'] = {'code': exc.code, **exc.details}
+            atomic_json(marker, failure)
+            raise ServiceError('section_correction_failed', details=failure) from exc
 
     def read_one(section, budget):
         key = sha256(canonical([runtime.signature, section]))
@@ -119,14 +181,17 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
         folder.mkdir(exist_ok=True, mode=0o700)
         completed = folder / 'validated.json'
         split_flag = folder / 'split.json'
+        if previous_signature:
+            previous_folder = root / sha256(canonical([previous_signature, section]))
+            previous_split = previous_folder / 'split.json'
+            if not completed.exists() and not split_flag.exists() and previous_split.exists():
+                split_flag = previous_split
         location = {k: section[k] for k in ('document_id', 'page', 'start', 'end')}
         progress({**stats, 'section': location, 'section_output_bytes': 0, 'section_input_tokens': None})
         if split_flag.exists():
             stats['sections_split'] += 1
             stats['sections_total'] += 1
-            saved = decode_section(split_flag.read_text(encoding='utf-8'))
-            offsets = saved.get('offsets') or legacy_split_offsets(section['text'])
-            for part in split(section, offsets):
+            for part in saved_split(split_flag, section):
                 read_one(part, budget)
             return
         try:
@@ -134,8 +199,21 @@ def build_ontology(runtime, sources, directory, progress, *, iri):
                 data = validate_section(decode_section(completed.read_text(encoding='utf-8')), section['text'])
                 stats['sections_reused'] += 1
             else:
-                generated = generate(section, folder, budget)
-                data = validate_section(generated, section['text'])
+                data = None
+                if previous_signature:
+                    previous_completed = previous_folder / 'validated.json'
+                    if previous_completed.exists():
+                        try:
+                            data = validate_section(
+                                decode_section(previous_completed.read_text(encoding='utf-8')),
+                                section['text'],
+                            )
+                        except ServiceError:
+                            pass
+                        else:
+                            stats['sections_reused'] += 1
+                if data is None:
+                    data = extract_section(section, folder, budget)
                 atomic_json(completed, data)
         except ServiceError as exc:
             offsets = split_offsets(section['text']) if exc.code in SPLIT_ERRORS else None

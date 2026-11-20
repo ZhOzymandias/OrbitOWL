@@ -1,5 +1,7 @@
 """Single GPU worker with durable section checkpoints."""
+import argparse
 import fcntl
+import json
 import os
 import time
 
@@ -7,7 +9,7 @@ from . import SERVICE_REVISION
 from .artifacts import normalize
 from .contracts import ServiceError, canonical, sha256
 from .documents import extract
-from .pipeline import build_ontology
+from .pipeline import build_ontology, count_reusable_sections
 from .runtime import REVISION, NativeRuntime
 from .store import Store
 
@@ -21,6 +23,10 @@ def run_once(store, runtime):
     report = {'engine': 'supernova-owl-v1', 'service_revision': SERVICE_REVISION, 'semantic_review': 'not_performed',
               'logical_check': 'not_run', 'input_mode': 'independent_original_files',
               'visual_content_processed': False, 'pipeline_revision': REVISION}
+    checkpoint_revision = job['report'].get('checkpoint_revision', job['report'].get('pipeline_revision'))
+    previous_signature = getattr(runtime, 'previous_signatures', {}).get(checkpoint_revision)
+    if previous_signature:
+        report['checkpoint_revision'] = checkpoint_revision
     try:
         manifest, sources = extract((directory/'input.zip').read_bytes())
         iri = 'urn:sinapsia:ontology:'+job_id
@@ -37,7 +43,8 @@ def run_once(store, runtime):
             store.update(job_id, report=report)
 
         progress({'stage': 'extracting_sections'})
-        xml, usage = build_ontology(runtime, sources, directory, progress, iri=iri)
+        xml, usage = build_ontology(runtime, sources, directory, progress, iri=iri,
+                                    previous_signature=previous_signature)
         progress({})
         store.update(job_id, phase='normalizing')
         xml, checks = normalize(xml, expected_iri=iri, strict=True)
@@ -58,15 +65,42 @@ def run_once(store, runtime):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument('--check-resume', metavar='JOB_ID',
+                        help='Check which older sections can be reused without inference')
+    resume.add_argument('--resume', metavar='JOB_ID',
+                        help='Requeue a 1.2 or 1.3 job stopped by the section attempt budget')
+    args = parser.parse_args()
     store = Store(os.getenv('SUPERNOVA_DATA', '/data'))
+    runtime = NativeRuntime(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081'),
+                            context=int(os.getenv('SUPERNOVA_CONTEXT', '65536')),
+                            model=os.getenv('ORBITOWL_MODEL', 'qwen3.8:27b'))
+    job_id = args.resume if args.resume is not None else args.check_resume
+    if job_id is not None:
+        try:
+            job = store.resume_section_budget_failure(job_id, preview=True)
+            directory = store.directory(job_id)
+            _, sources = extract((directory/'input.zip').read_bytes())
+            previous_signature = runtime.previous_signatures[job['report']['pipeline_revision']]
+            reusable = count_reusable_sections(previous_signature, sources, directory)
+            expected = job['report'].get('sections_completed', 0)
+            if args.resume is not None:
+                if reusable < expected:
+                    raise ServiceError('job_resume_checkpoint_mismatch', details={
+                        'sections_expected': expected, 'sections_reusable': reusable,
+                    })
+                job = store.resume_section_budget_failure(job_id)
+        except ServiceError as exc:
+            parser.exit(1, json.dumps({'error': exc.code, **exc.details}) + '\n')
+        print(json.dumps({'id': job['id'], 'status': job['status'],
+                          'sections_expected': expected, 'sections_reusable': reusable}))
+        return
     with (store.root/'worker.lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         (store.root/'worker-heartbeat').unlink(missing_ok=True)
         (store.root/'worker-revision').write_text(SERVICE_REVISION, encoding='ascii')
         store.recover_interrupted()
-        runtime = NativeRuntime(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081'),
-                                context=int(os.getenv('SUPERNOVA_CONTEXT', '65536')),
-                                model=os.getenv('ORBITOWL_MODEL', 'qwen3.8:27b'))
         while True:
             (store.root/'worker-heartbeat').touch()
             if not run_once(store, runtime):

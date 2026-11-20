@@ -134,6 +134,9 @@ def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
         body = json.loads(request.content)
         if request.url.path == '/tokenize':
             assert 'ONLY ORIGINAL PDF CONTENT' in body['content']
+            if calls:
+                assert 'section_quote_not_found' in body['content']
+                assert 'Non è nel PDF' in body['content']
             return httpx.Response(200, json={'tokens': [1, 2, 3]})
         calls.append(body)
         assert body['ignore_eos'] is False and body['n_predict'] == SECTION_OUTPUT_TOKENS
@@ -151,10 +154,12 @@ def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
     result = store.get(key)
     directory = store.directory(key)
     assert len(list((directory/'sections').glob('*/native-final.json'))) == 1
-    assert not run_once(store, runtime) and len(calls) == 1
+    assert not run_once(store, runtime) and len(calls) == (2 if bad_quote else 1)
     if bad_quote:
-        assert (result['status'], result['error']) == ('failed', 'section_quote_not_found')
+        assert (result['status'], result['error']) == ('failed', 'section_correction_failed')
         assert result['report']['failed_section']['page'] == 1
+        assert result['report']['failed_section']['correction_error']['code'] == 'section_quote_not_found'
+        assert result['report']['sections_split'] == 0
         assert not (directory/'ontology.owl').exists()
         return
     assert result['status'] == 'completed'

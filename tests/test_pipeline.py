@@ -1,16 +1,20 @@
+import json
+import sys
 import uuid
 from collections import Counter
 
 import pytest
 from rdflib import OWL, RDF, Graph, Namespace
-from test_service import package, packed
+from test_service import package, packed, pdf_bytes
 
 from supernova.compiler import compile_owl
-from supernova.contracts import ServiceError, sha256
-from supernova.pipeline import build_ontology
+from supernova.contracts import ServiceError, canonical, sha256
+from supernova.documents import extract
+from supernova.pipeline import atomic_json, build_ontology, sections, split, split_offsets
+from supernova.runtime import NativeRuntime
 from supernova.section_schema import LIMITS, validate_section
 from supernova.store import Store
-from supernova.worker import run_once
+from supernova.worker import main, run_once
 
 
 def structured(quote, scope=''):
@@ -207,3 +211,112 @@ def test_model_split_response_is_a_contract_error_and_cannot_fan_out(tmp_path):
         build_ontology(runner, sources, tmp_path, events.append, iri='urn:test:output-contract')
     assert runner.calls == 1
     assert not any('last_split' in event for event in events)
+
+
+@pytest.mark.parametrize('invalid_kind', [True, False])
+@pytest.mark.parametrize('empty_correction', [True, False])
+def test_corrects_a_validation_error_once_on_the_original_span(tmp_path, invalid_kind, empty_correction):
+    text = 'Riavvio dopo la verifica. La procedura termina al completamento della verifica.'
+    accepted = structured('Riavvio dopo la verifica.')
+    rejected = structured('Riavvio dopo il controllo.' if not invalid_kind else accepted['relations'][0]['quote'])
+    if invalid_kind:
+        rejected['entities'][1]['kind'] = 'class'
+    code = 'section_relation_types_invalid' if invalid_kind else 'section_quote_not_found'
+
+    class Runner:
+        signature = 'test'
+
+        def __init__(self):
+            self.calls = []
+            self.correction_result = accepted
+
+        def generate_section(self, section, directory, progress, *, correction=None):
+            self.calls.append(section)
+            if correction is None:
+                return rejected
+            assert correction['previous'] == rejected
+            assert correction['issue']['code'] == code
+            assert correction['issue']['list'] == 'relations'
+            assert correction['issue']['index'] == 0
+            return self.correction_result
+
+    sources = [{'document_id': 'doc', 'filename': 'test.txt', 'pages': [{'number': 1, 'text': text}]}]
+    runner = Runner()
+    success = tmp_path/'success'
+    success.mkdir()
+    _, report = build_ontology(runner, sources, success, lambda update: None, iri='urn:test:correction')
+    assert runner.calls == list(sections(sources)) * 2
+    assert report['section_corrections'] == 1
+    assert report['sections_split'] == 0
+
+    runner.calls.clear()
+    runner.correction_result = {**rejected, 'relations': []} if empty_correction else rejected
+    for _ in range(2):
+        with pytest.raises(ServiceError, match='section_correction_failed') as failure:
+            build_ontology(runner, sources, tmp_path, lambda update: None, iri='urn:test:correction')
+        expected = 'section_correction_removed_all_facts' if empty_correction else code
+        assert failure.value.details['correction_error']['code'] == expected
+    assert runner.calls == list(sections(sources)) * 2
+    assert not list((tmp_path/'sections').glob('*/split.json'))
+
+
+@pytest.mark.parametrize('previous_revision', ['structured-sections-1.2', 'structured-sections-1.3'])
+def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, capsys, previous_revision):
+    text = 'Riavvio dopo la verifica. Completa la verifica prima del riavvio.'
+    archive, manifest = package(content=pdf_bytes(text))
+    key = manifest['build_id']
+    store = Store(tmp_path)
+    store.submit(archive, key)
+    _, sources = extract(archive)
+    (initial,) = sections(sources)
+    offsets = split_offsets(initial['text'])
+    left, right = split(initial, offsets)
+    runtime = NativeRuntime('http://runner')
+    checkpoints = store.directory(key)/'sections'
+
+    def legacy_path(section):
+        return checkpoints/sha256(canonical([runtime.previous_signatures[previous_revision], section]))
+
+    initial_dir, left_dir, right_dir = map(legacy_path, (initial, left, right))
+    for directory in (initial_dir, left_dir, right_dir):
+        directory.mkdir(parents=True)
+    atomic_json(initial_dir/'split.json', {'offsets': offsets, 'trigger': 'section_quote_not_found'})
+    atomic_json(checkpoints/f'{initial_dir.name}.attempts.json', 32)
+    atomic_json(left_dir/'validated.json', structured(left['text']))
+    atomic_json(right_dir/'validated.json', structured('citazione estranea al testo'))
+    previous_report = {'pipeline_revision': previous_revision, 'sections_completed': 2}
+    store.update(key, status='failed', error='section_attempt_budget_exhausted', report=previous_report)
+    monkeypatch.setenv('SUPERNOVA_DATA', str(tmp_path))
+    monkeypatch.setenv('ORBITOWL_MODEL', runtime.model)
+    monkeypatch.setenv('SUPERNOVA_CONTEXT', str(runtime.context))
+    monkeypatch.setattr(sys, 'argv', ['worker', '--check-resume', key])
+    main()
+    preview = json.loads(capsys.readouterr().out)
+    assert preview['sections_expected'] == 2
+    assert preview['sections_reusable'] == 1
+    assert store.get(key)['status'] == 'failed'
+    monkeypatch.setattr(sys, 'argv', ['worker', '--resume', key])
+    with pytest.raises(SystemExit, match='1'):
+        main()
+    assert json.loads(capsys.readouterr().err)['error'] == 'job_resume_checkpoint_mismatch'
+    assert store.get(key)['status'] == 'failed'
+
+    store.update(key, report={**previous_report, 'sections_completed': 1})
+    main()
+    assert json.loads(capsys.readouterr().out)['status'] == 'queued'
+
+    calls = []
+
+    def generate(section, directory, progress):
+        calls.append(section)
+        return structured(section['text'])
+
+    monkeypatch.setattr(runtime, 'generate_section', generate)
+    with pytest.raises(ServiceError, match='job_resume_not_applicable'):
+        store.resume_section_budget_failure(key)
+    assert run_once(store, runtime)
+    assert calls == [right]
+    result = store.get(key)
+    assert result['status'] == 'completed'
+    assert result['report']['sections_reused'] == 1
+    assert result['report']['sections_completed'] == 2

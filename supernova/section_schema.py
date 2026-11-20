@@ -75,18 +75,23 @@ def validate_section(data, source):
             raise ServiceError("section_schema_invalid")
         entities[key] = entity["kind"]
 
-    def evidence(row):
+    def evidence(row, location):
         quote = clean(row["quote"])
         if not quote or len(row["quote"]) > 360 or quote not in clean(source):
-            raise ServiceError("section_quote_not_found")
+            raise ServiceError("section_quote_not_found", details={**location, "field": "quote"})
 
-    for relation in data["relations"]:
+    for index, relation in enumerate(data["relations"]):
+        location = {"list": "relations", "index": index}
         record(relation, "source kind label target quote")
         source_kind = entities.get(relation["source"])
         target_kind = entities.get(relation["target"])
         kind = relation["kind"]
         if not source_kind or not target_kind:
-            raise ServiceError("section_relation_entity_unknown")
+            raise ServiceError("section_relation_entity_unknown", details={
+                **location, "missing_endpoints": [
+                    field for field in ("source", "target") if relation[field] not in entities
+                ],
+            })
         if (kind not in RELATION_KINDS or len(relation["label"]) > 120
                 or (kind == "relation" and not clean(relation["label"]))):
             raise ServiceError("section_relation_fields_invalid")
@@ -94,14 +99,18 @@ def validate_section(data, source):
                 or (kind == "type" and not (source_kind != "class" and target_kind == "class"))
                 or (kind == "relation" and (source_kind == "class") != (target_kind == "class"))
                 or (kind in PREDICATES and (source_kind != "procedure" or target_kind == "class"))):
-            raise ServiceError("section_relation_types_invalid")
-        evidence(relation)
+            raise ServiceError("section_relation_types_invalid", details={
+                **location, "relation_kind": kind, "source_kind": source_kind,
+                "target_kind": target_kind,
+            })
+        evidence(relation, location)
 
-    for attribute in data["attributes"]:
+    for index, attribute in enumerate(data["attributes"]):
+        location = {"list": "attributes", "index": index}
         record(attribute, "source label type value quote")
         kind, value = attribute["type"], attribute["value"]
         if attribute["source"] not in entities:
-            raise ServiceError("section_attribute_entity_unknown")
+            raise ServiceError("section_attribute_entity_unknown", details=location)
         if (not clean(attribute["label"]) or not clean(value)
                 or max(len(attribute["label"]), len(value)) > 120 or kind not in VALUE_KINDS):
             raise ServiceError("section_attribute_fields_invalid")
@@ -116,7 +125,7 @@ def validate_section(data, source):
             valid_value = False
         if not valid_value:
             raise ServiceError("section_attribute_value_invalid")
-        evidence(attribute)
+        evidence(attribute, location)
     return data
 
 

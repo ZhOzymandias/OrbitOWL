@@ -96,10 +96,13 @@ runner e alla configurazione locale hanno un ciclo distinto dal codice.
 
 Il worker divide il testo di ogni pagina in sezioni sovrapposte e invia al
 runner una richiesta JSON vincolata per sezione. Verifica la presenza testuale
-delle citazioni e salva le sezioni accettate in `<job-id>/sections/`. Una
-sezione troncata, non valida o con una lista piena viene divisa lungo
-un confine testuale. Il worker preferisce paragrafi e frasi, anche oltre
-due livelli. Ogni sezione iniziale e le sue suddivisioni condividono
+delle citazioni e salva le sezioni accettate in `<job-id>/sections/`.
+Se la risposta è troncata o raggiunge un limite di capacità,
+il worker divide la sezione lungo un confine testuale. Un errore nei tipi
+o negli ID delle entità, oppure una citazione assente dal testo, consente
+una sola correzione guidata dal risultato della validazione. Se anche
+questa fallisce, il job si ferma e conserva le sezioni già accettate.
+Ogni sezione iniziale e le sue suddivisioni condividono
 un massimo di 32 invocazioni, conteggiate anche dopo un riavvio.
 Un errore temporaneo del runner consente un solo nuovo tentativo della
 stessa sezione. Il report indica documento, pagina, intervallo e motivo
@@ -107,6 +110,23 @@ dell'arresto. In caso di lista piena indica anche quale ha raggiunto il limite.
 
 Dopo un'interruzione del worker, i job in corso di questa pipeline tornano in
 coda. A parità di configurazione e testo il worker riusa le sezioni validate.
+Un job della pipeline 1.2 o 1.3 fermato da `section_attempt_budget_exhausted`
+può essere rimesso in coda esplicitamente dopo aver aggiornato il worker alla
+1.4. Il worker ripercorre le suddivisioni salvate, rivalida i checkpoint con
+lo stesso modello e testo e apre il budget 1.4 per le sezioni da elaborare.
+Il primo comando conta le sezioni riusabili senza inferenza. Il secondo
+riavvia lo stesso ID solo se ritrova almeno tutte le sezioni indicate come
+completate dal report precedente.
+
+```bash
+sudo docker compose exec -T worker python -m supernova.worker --check-resume ID_JOB
+sudo docker compose exec -T worker python -m supernova.worker --resume ID_JOB
+```
+
+Per i job integrati, Sinapsia ha uno stato proprio. Un job già segnato come
+fallito in Sinapsia richiede una riattivazione anche sul lato client per
+importare l'artefatto completato.
+
 Il compilatore riconcilia le entità con lo stesso tipo, etichetta normalizzata
 e ambito. Le relazioni conservano ID documento, pagina PDF e citazione
 sull'assioma. La verifica del testo citato è automatica. La pertinenza

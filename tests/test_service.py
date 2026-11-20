@@ -110,8 +110,8 @@ def test_authenticated_api_and_artifact_state(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize('bad_quote', [False, True])
-def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
+@pytest.mark.parametrize('bad_reference', [False, True])
+def test_worker_native_stream_compiles_structured_object(tmp_path, bad_reference):
     data, manifest = package()
     store = Store(tmp_path)
     store.submit(data, manifest['build_id'])
@@ -125,7 +125,7 @@ def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
         ],
         'relations': [
             {'source': 'p', 'kind': 'prerequisite', 'label': '', 'target': 'r',
-             'quote': 'Non è nel PDF' if bad_quote else 'ONLY ORIGINAL PDF CONTENT'},
+             'quote': 'p999' if bad_reference else 'p1'},
         ],
         'attributes': [],
     }
@@ -142,6 +142,7 @@ def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
             text = json.dumps({'entities': output['entities']})
         else:
             assert 'prerequisite' in body['grammar']
+            assert body['grammar'].split('quote ::= ', 1)[1].splitlines()[0] == r'"\"p1\""'
             text = json.dumps({'relations': output['relations'], 'attributes': [], 'unresolved': []})
         events = [
             {'content': text[:49]}, {'content': text[49:]},
@@ -156,8 +157,8 @@ def test_worker_native_stream_compiles_structured_object(tmp_path, bad_quote):
     directory = store.directory(key)
     assert len(list((directory/'sections').glob('*/native-final.json'))) == 1
     assert not run_once(store, runtime) and len(calls) == 2
-    if bad_quote:
-        assert (result['status'], result['error']) == ('failed', 'section_quote_not_found')
+    if bad_reference:
+        assert (result['status'], result['error']) == ('failed', 'section_passage_reference_invalid')
         assert result['report']['failed_section']['page'] == 1
         assert result['report']['sections_split'] == 0
         assert not (directory/'ontology.owl').exists()

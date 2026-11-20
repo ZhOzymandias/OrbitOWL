@@ -7,10 +7,12 @@ from pathlib import Path
 import httpx
 
 from .contracts import ServiceError, canonical, sha256
-from .section_schema import GRAMMAR, decode_section, entity_grammar, fact_grammar, validate_section
+from .section_schema import (
+    GRAMMAR, decode_section, entity_grammar, fact_grammar, source_passages, validate_section,
+)
 
-REVISION = 'structured-sections-1.6.1'
-PREVIOUS_REVISIONS = ('structured-sections-1.2', 'structured-sections-1.3', 'structured-sections-1.4')
+REVISION = 'structured-sections-1.6.2'
+PREVIOUS_REVISIONS = ('structured-sections-1.2', 'structured-sections-1.3', 'structured-sections-1.4', 'structured-sections-1.6.1')
 PROMPT_PATH = Path(__file__).with_name('section_prompt.txt')
 SECTION_OUTPUT_TOKENS = 4096
 MAX_SECTION_BYTES = 65536
@@ -23,10 +25,11 @@ class NativeRuntime:
         self.model = model
         self.entity_prompt = PROMPT_PATH.with_name('section_entities_prompt.txt').read_text(encoding='utf-8').strip()
         self.fact_prompt = PROMPT_PATH.with_name('section_facts_prompt.txt').read_text(encoding='utf-8').strip()
+        example_entities = [{'id': 'c', 'kind': 'class'}, {'id': 'i', 'kind': 'individual'},
+                            {'id': 'p', 'kind': 'procedure'}]
         self.signature = sha256(canonical([
             REVISION, self.entity_prompt, self.fact_prompt, entity_grammar(),
-            fact_grammar([{'id': 'c', 'kind': 'class'}, {'id': 'i', 'kind': 'individual'},
-                          {'id': 'p', 'kind': 'procedure'}]), model, model_digest, context,
+            fact_grammar(example_entities, ['p1']), model, model_digest, context,
         ]))
         # 1.3 changed only the first line of the grammar from 1.2.
         old_grammar = PROMPT_PATH.with_name('section_grammar_1_1.gbnf').read_text(encoding='utf-8').strip()
@@ -41,8 +44,14 @@ class NativeRuntime:
                 extraction_revision, PROMPT_PATH.with_name(prompt).read_text(encoding='utf-8').strip(),
                 grammar, model, model_digest, context,
             ]))
-            for pipeline_revision, (extraction_revision, prompt, grammar) in zip(PREVIOUS_REVISIONS, previous)
+            for pipeline_revision, (extraction_revision, prompt, grammar) in zip(PREVIOUS_REVISIONS[:3], previous, strict=True)
         }
+
+        old_prompt = PROMPT_PATH.with_name('section_facts_prompt_1_6_1.txt').read_text(encoding='utf-8').strip()
+        self.previous_signatures['structured-sections-1.6.1'] = sha256(canonical([
+            'structured-sections-1.6.1', self.entity_prompt, old_prompt, entity_grammar(),
+            fact_grammar(example_entities), model, model_digest, context,
+        ]))
 
     def generate_section(self, section, directory, progress):
         checkpoint = directory / 'entities.json'
@@ -60,18 +69,28 @@ class NativeRuntime:
             temporary.write_bytes(canonical(entities))
             temporary.replace(checkpoint)
 
+        passages = source_passages(section['text'])
         progress({'section_step': 'facts'})
         facts = self.complete(
-            self.fact_prompt, {'section': section, **entities}, fact_grammar(entities['entities']),
+            self.fact_prompt, {'passages': passages, **entities},
+            fact_grammar(entities['entities'], passages),
             directory, progress,
         )
         if not isinstance(facts, dict) or set(facts) != {'relations', 'attributes', 'unresolved'}:
             raise ServiceError('section_schema_invalid')
         unresolved = facts.pop('unresolved')
         if not isinstance(unresolved, list) or len(unresolved) > 12 or any(
-            not isinstance(quote, str) or not quote.strip() or len(quote) > 360 for quote in unresolved
+            not isinstance(ref, str) or ref not in passages for ref in unresolved
         ):
             raise ServiceError('section_schema_invalid')
+        for rows in facts.values():
+            if not isinstance(rows, list):
+                raise ServiceError('section_schema_invalid')
+            for row in rows:
+                ref = row.get('quote') if isinstance(row, dict) else None
+                if not isinstance(ref, str) or ref not in passages:
+                    raise ServiceError('section_passage_reference_invalid')
+                row['quote'] = passages[ref]
         data.update(facts)
         validate_section(data, section['text'])
         if unresolved:

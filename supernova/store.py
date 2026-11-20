@@ -101,9 +101,13 @@ class Store:
             ).fetchone()
             if row is None:
                 raise ServiceError('job_not_found', 404)
-            if (row['status'] != 'failed' or row['error'] not in {'section_attempt_budget_exhausted', 'section_correction_failed'}
+            revision = json.loads(row['report']).get('pipeline_revision')
+            recoverable = {'section_attempt_budget_exhausted', 'section_correction_failed'}
+            if revision == 'structured-sections-1.6.1':
+                recoverable.add('section_quote_not_found')
+            if (row['status'] != 'failed' or row['error'] not in recoverable
                     or row['cancel_requested'] or row['artifact_sha256']
-                    or json.loads(row['report']).get('pipeline_revision') not in PREVIOUS_REVISIONS):
+                    or revision not in PREVIOUS_REVISIONS):
                 raise ServiceError('job_resume_not_applicable', 409)
             if not (directory/'input.zip').is_file() or not (directory/'sections').is_dir():
                 raise ServiceError('job_resume_checkpoint_missing', 409)

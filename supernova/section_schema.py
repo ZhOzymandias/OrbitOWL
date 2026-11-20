@@ -72,7 +72,7 @@ def entity_grammar():
     return render_grammar(rules)
 
 
-def fact_grammar(entities):
+def fact_grammar(entities, passages=None):
     entities = {row["id"]: row["kind"] for row in entities}
     rules = grammar_rules()
     rules["root"] = 'ws ' + json_object(
@@ -100,7 +100,23 @@ def fact_grammar(entities):
     else:
         rules["attributes"] = '"[" ws "]"'
         rules.pop("attribute")
+    if passages is not None:
+        rules["quote"] = choices(passages)
     return render_grammar(rules)
+
+
+def source_passages(text):
+    """Number contiguous source passages within the existing citation length limit."""
+    passages = {}
+    for part in re.split(r'\n[ \t]*\n+|(?<=[.!?])\s+', text):
+        rest = clean(part)
+        while rest:
+            end = len(rest) if len(rest) <= 360 else rest.rfind(" ", 0, 361)
+            if end <= 0:
+                end = 360
+            passages[f"p{len(passages) + 1}"] = rest[:end]
+            rest = rest[end:].lstrip()
+    return passages
 
 
 def clean(value):

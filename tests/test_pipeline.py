@@ -235,8 +235,13 @@ def test_invalid_fact_is_rejected_without_splitting(tmp_path, invalid_kind):
     assert not list((tmp_path/'sections').glob('*/validated.json'))
 
 
-@pytest.mark.parametrize('previous_revision', ['structured-sections-1.2', 'structured-sections-1.3', 'structured-sections-1.4'])
-def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, capsys, previous_revision):
+@pytest.mark.parametrize(('previous_revision', 'failure'), [
+    ('structured-sections-1.2', 'section_attempt_budget_exhausted'),
+    ('structured-sections-1.3', 'section_attempt_budget_exhausted'),
+    ('structured-sections-1.4', 'section_attempt_budget_exhausted'),
+    ('structured-sections-1.6.1', 'section_quote_not_found'),
+])
+def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, capsys, previous_revision, failure):
     text = 'Riavvio dopo la verifica. Completa la verifica prima del riavvio.'
     archive, manifest = package(content=pdf_bytes(text))
     key = manifest['build_id']
@@ -260,7 +265,7 @@ def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, c
     atomic_json(left_dir/'validated.json', structured(left['text']))
     atomic_json(right_dir/'validated.json', structured('citazione estranea al testo'))
     previous_report = {'pipeline_revision': previous_revision, 'sections_completed': 2}
-    store.update(key, status='failed', error='section_attempt_budget_exhausted', report=previous_report)
+    store.update(key, status='failed', error=failure, report=previous_report)
     monkeypatch.setenv('SUPERNOVA_DATA', str(tmp_path))
     monkeypatch.setenv('ORBITOWL_MODEL', runtime.model)
     monkeypatch.setenv('SUPERNOVA_CONTEXT', str(runtime.context))

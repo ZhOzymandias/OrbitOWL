@@ -17,13 +17,10 @@ che esprimono dati, obblighi, condizioni o eccezioni del dominio. Se non ci
 sono fatti del dominio, restituisci
 {"relations": [], "attributes": [], "unresolved": []}.
 
-Per quote copia dal testo il passaggio continuo più breve che sostiene il
-fatto. Puoi uniformare gli spazi e i ritorni a capo, ma mantieni le parole,
-la punteggiatura e l'ordine. In una tabella, copia il contenuto di una riga
-quando basta; se serve l'intestazione, copia anche il testo intermedio.
-Per esempio, da "Versione Data Descrizione\n02 15/03/2025 Aggiornamento"
-si può citare "02 15/03/2025 Aggiornamento". "Versione 02 15/03/2025
-Aggiornamento" salta due parole ed è una citazione errata.
-Se un fatto rilevante non è rappresentabile con le entità fornite, copia un
-passaggio continuo che lo esprime in unresolved; altrimenti lascia quella
-lista vuota. Non inventare fatti né usare l'ID di un'altra entità.
+Leggi i passaggi numerati nell'ordine fornito. In quote scrivi soltanto
+l'identificatore del passaggio che sostiene il fatto, per esempio "p3".
+Scegli la prova più diretta disponibile. Usa i passaggi vicini come contesto
+per capire il fatto. Se un fatto rilevante non è rappresentabile con le
+entità fornite, inserisci l'identificatore del passaggio in unresolved.
+Altrimenti lascia quella lista vuota. Non inventare fatti né usare l'ID
+di un'altra entità.

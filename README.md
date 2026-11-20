@@ -98,7 +98,9 @@ OrbitOWL elabora i documenti di ciascun corpus nell'ordine del manifesto.
 Ogni chiamata riceve una sezione del testo. Il modello estrae prima le entità
 e poi le relazioni e gli attributi. La grammatica della seconda richiesta
 ammette gli identificatori e le combinazioni di tipi previsti dalle entità
-estratte. Il worker verifica che ogni citazione sia presente nella sezione.
+estratte. Il modello indica il passaggio che documenta ciascun fatto con un ID.
+Il worker recupera il testo originale del passaggio e ne verifica la presenza
+nella sezione.
 Quando l'output è troncato o la sezione esaurisce la capacità, il worker prova
 una suddivisione lungo un confine testuale. Un errore non risolto ferma il job
 con il dettaglio del documento, della pagina e dell'intervallo.
@@ -114,7 +116,8 @@ della citazione richiede revisione.
 
 Dopo un'interruzione del worker, i job in corso tornano in coda e riusano
 le sezioni già validate. Per alcuni errori terminali delle pipeline
-1.2–1.4 è possibile far ripartire lo stesso job con il worker aggiornato.
+1.2–1.4 e per citazioni non letterali della 1.6.1 è possibile far ripartire
+lo stesso job con il worker aggiornato.
 Il primo comando verifica i checkpoint senza inferenza. Il secondo
 rimette il job in coda se ritrova almeno le sezioni già completate.
 

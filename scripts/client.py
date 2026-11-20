@@ -5,6 +5,7 @@ import io
 import json
 import uuid
 import zipfile
+from collections import Counter
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -31,14 +32,19 @@ def make_bundle(files):
     key = str(uuid.uuid4())
     manifest = {"protocol": PROTOCOL, "build_id": key, "snapshot_id": str(uuid.uuid4()), "documents": []}
     output = io.BytesIO()
+    occurrences = Counter()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as bundle:
         for path in files:
             data = path.read_bytes()
-            document_id = str(uuid.uuid4())
+            checksum = sha256(data)
+            identity = (path.name, checksum)
+            ordinal = occurrences[identity]
+            occurrences[identity] += 1
+            document_id = str(uuid.uuid5(uuid.NAMESPACE_URL, json.dumps(["OrbitOWL", *identity, ordinal])))
             name = f"files/{document_id}{path.suffix.lower()}"
             bundle.writestr(name, data)
             manifest["documents"].append(
-                {"id": document_id, "filename": path.name, "path": name, "sha256": sha256(data)}
+                {"id": document_id, "filename": path.name, "path": name, "sha256": checksum}
             )
         bundle.writestr("manifest.json", json.dumps(manifest))
     data = output.getvalue()

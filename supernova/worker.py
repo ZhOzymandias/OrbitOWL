@@ -9,9 +9,17 @@ from . import SERVICE_REVISION
 from .artifacts import normalize
 from .contracts import ServiceError, canonical, sha256
 from .documents import extract
-from .pipeline import build_ontology, count_reusable_sections
+from .incremental import build_incremental
+from .pipeline import count_reusable_sections
 from .runtime import REVISION, NativeRuntime
 from .store import Store
+
+
+def checkpoint_revisions(report, runtime):
+    revisions = (report.get('pipeline_revision'), *report.get('checkpoint_revisions', ()),
+                 report.get('checkpoint_revision'))
+    return tuple(dict.fromkeys(revision for revision in revisions
+                               if revision in getattr(runtime, 'previous_signatures', {})))
 
 
 def run_once(store, runtime):
@@ -23,10 +31,9 @@ def run_once(store, runtime):
     report = {'engine': 'supernova-owl-v1', 'service_revision': SERVICE_REVISION, 'semantic_review': 'not_performed',
               'logical_check': 'not_run', 'input_mode': 'independent_original_files',
               'visual_content_processed': False, 'pipeline_revision': REVISION}
-    checkpoint_revision = job['report'].get('checkpoint_revision', job['report'].get('pipeline_revision'))
-    previous_signature = getattr(runtime, 'previous_signatures', {}).get(checkpoint_revision)
-    if previous_signature:
-        report['checkpoint_revision'] = checkpoint_revision
+    revisions = checkpoint_revisions(job['report'], runtime)
+    if revisions:
+        report['checkpoint_revisions'] = revisions
     try:
         manifest, sources = extract((directory/'input.zip').read_bytes())
         iri = 'urn:sinapsia:ontology:'+job_id
@@ -43,8 +50,10 @@ def run_once(store, runtime):
             store.update(job_id, report=report)
 
         progress({'stage': 'extracting_sections'})
-        xml, usage = build_ontology(runtime, sources, directory, progress, iri=iri,
-                                    previous_signature=previous_signature)
+        xml, usage = build_incremental(
+            runtime, sources, directory, progress, iri=iri,
+            previous_signatures=tuple(runtime.previous_signatures[revision] for revision in revisions),
+        )
         progress({})
         store.update(job_id, phase='normalizing')
         xml, checks = normalize(xml, expected_iri=iri, strict=True)
@@ -70,7 +79,7 @@ def main():
     resume.add_argument('--check-resume', metavar='JOB_ID',
                         help='Check which older sections can be reused without inference')
     resume.add_argument('--resume', metavar='JOB_ID',
-                        help='Requeue a 1.2 or 1.3 job stopped by the section attempt budget')
+                        help='Requeue a compatible job stopped by section budget or validation')
     args = parser.parse_args()
     store = Store(os.getenv('SUPERNOVA_DATA', '/data'))
     runtime = NativeRuntime(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081'),
@@ -82,8 +91,9 @@ def main():
             job = store.resume_section_budget_failure(job_id, preview=True)
             directory = store.directory(job_id)
             _, sources = extract((directory/'input.zip').read_bytes())
-            previous_signature = runtime.previous_signatures[job['report']['pipeline_revision']]
-            reusable = count_reusable_sections(previous_signature, sources, directory)
+            signatures = tuple(runtime.previous_signatures[revision]
+                               for revision in checkpoint_revisions(job['report'], runtime))
+            reusable = count_reusable_sections(signatures, sources, directory)
             expected = job['report'].get('sections_completed', 0)
             if args.resume is not None:
                 if reusable < expected:

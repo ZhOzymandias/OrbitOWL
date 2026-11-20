@@ -101,7 +101,7 @@ class Store:
             ).fetchone()
             if row is None:
                 raise ServiceError('job_not_found', 404)
-            if (row['status'] != 'failed' or row['error'] != 'section_attempt_budget_exhausted'
+            if (row['status'] != 'failed' or row['error'] not in {'section_attempt_budget_exhausted', 'section_correction_failed'}
                     or row['cancel_requested'] or row['artifact_sha256']
                     or json.loads(row['report']).get('pipeline_revision') not in PREVIOUS_REVISIONS):
                 raise ServiceError('job_resume_not_applicable', 409)

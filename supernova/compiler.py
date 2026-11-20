@@ -1,16 +1,16 @@
 """Deterministic reconciliation and RDF/XML generation from grounded records."""
 
-from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, URIRef
+from rdflib import OWL, RDF, RDFS, XSD, BNode, Graph, Literal, Namespace, SKOS, URIRef
 
 from .contracts import ServiceError, canonical, sha256
-from .section_schema import PREDICATES, clean, identity
+from .section_schema import PREDICATES, clean, entity_key, identity
 
 VALUE_TYPES = {
     'integer': XSD.integer, 'decimal': XSD.decimal, 'boolean': XSD.boolean,
 }
 
 
-def compile_owl(iri, sections):
+def compile_owl(iri, sections, *, concepts=None):
     graph = Graph()
     ns = Namespace(iri + '#')
     for name, namespace in [('owl', OWL), ('rdf', RDF), ('rdfs', RDFS), ('pc', ns), ('xsd', XSD)]:
@@ -39,7 +39,11 @@ def compile_owl(iri, sections):
         local = {}
         for row in data['entities']:
             kind, label, scope = row['kind'], clean(row['label']), clean(row['scope'])
-            entity = ns['e_' + digest(kind, identity(label), identity(scope))]
+            key = entity_key(row)
+            if concepts is not None:
+                key = concepts.resolve(key)
+                label = concepts.labels[key][1]
+            entity = ns['e_' + digest(*key)]
             local[row['id']] = (entity, kind)
             if entity not in entities:
                 entities.add(entity)
@@ -93,6 +97,12 @@ def compile_owl(iri, sections):
             graph.add((prop, RDF.type, property_kind))
             graph.add((prop, RDFS.label, Literal(label)))
             annotate((source, prop, value), section, row['quote'])
+
+    if concepts is not None and concepts.evidence:
+        graph.add((SKOS.altLabel, RDF.type, OWL.AnnotationProperty))
+        for alias, section, quote in concepts.evidence:
+            entity = ns['e_' + digest(*concepts.resolve(alias))]
+            annotate((entity, SKOS.altLabel, Literal(concepts.labels[alias][1])), section, quote)
 
     if not entities:
         raise ServiceError('ontology_no_entities')

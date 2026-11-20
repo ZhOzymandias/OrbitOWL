@@ -214,11 +214,9 @@ def test_model_split_response_is_a_contract_error_and_cannot_fan_out(tmp_path):
 
 
 @pytest.mark.parametrize('invalid_kind', [True, False])
-@pytest.mark.parametrize('empty_correction', [True, False])
-def test_corrects_a_validation_error_once_on_the_original_span(tmp_path, invalid_kind, empty_correction):
+def test_invalid_fact_is_rejected_without_splitting(tmp_path, invalid_kind):
     text = 'Riavvio dopo la verifica. La procedura termina al completamento della verifica.'
-    accepted = structured('Riavvio dopo la verifica.')
-    rejected = structured('Riavvio dopo il controllo.' if not invalid_kind else accepted['relations'][0]['quote'])
+    rejected = structured('Riavvio dopo la verifica.' if invalid_kind else 'Citazione estranea.')
     if invalid_kind:
         rejected['entities'][1]['kind'] = 'class'
     code = 'section_relation_types_invalid' if invalid_kind else 'section_quote_not_found'
@@ -226,41 +224,18 @@ def test_corrects_a_validation_error_once_on_the_original_span(tmp_path, invalid
     class Runner:
         signature = 'test'
 
-        def __init__(self):
-            self.calls = []
-            self.correction_result = accepted
-
-        def generate_section(self, section, directory, progress, *, correction=None):
-            self.calls.append(section)
-            if correction is None:
-                return rejected
-            assert correction['previous'] == rejected
-            assert correction['issue']['code'] == code
-            assert correction['issue']['list'] == 'relations'
-            assert correction['issue']['index'] == 0
-            return self.correction_result
+        def generate_section(self, section, directory, progress):
+            return rejected
 
     sources = [{'document_id': 'doc', 'filename': 'test.txt', 'pages': [{'number': 1, 'text': text}]}]
-    runner = Runner()
-    success = tmp_path/'success'
-    success.mkdir()
-    _, report = build_ontology(runner, sources, success, lambda update: None, iri='urn:test:correction')
-    assert runner.calls == list(sections(sources)) * 2
-    assert report['section_corrections'] == 1
-    assert report['sections_split'] == 0
-
-    runner.calls.clear()
-    runner.correction_result = {**rejected, 'relations': []} if empty_correction else rejected
-    for _ in range(2):
-        with pytest.raises(ServiceError, match='section_correction_failed') as failure:
-            build_ontology(runner, sources, tmp_path, lambda update: None, iri='urn:test:correction')
-        expected = 'section_correction_removed_all_facts' if empty_correction else code
-        assert failure.value.details['correction_error']['code'] == expected
-    assert runner.calls == list(sections(sources)) * 2
-    assert not list((tmp_path/'sections').glob('*/split.json'))
+    events = []
+    with pytest.raises(ServiceError, match=code):
+        build_ontology(Runner(), sources, tmp_path, events.append, iri='urn:test:invalid-fact')
+    assert not any('last_split' in event for event in events)
+    assert not list((tmp_path/'sections').glob('*/validated.json'))
 
 
-@pytest.mark.parametrize('previous_revision', ['structured-sections-1.2', 'structured-sections-1.3'])
+@pytest.mark.parametrize('previous_revision', ['structured-sections-1.2', 'structured-sections-1.3', 'structured-sections-1.4'])
 def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, capsys, previous_revision):
     text = 'Riavvio dopo la verifica. Completa la verifica prima del riavvio.'
     archive, manifest = package(content=pdf_bytes(text))

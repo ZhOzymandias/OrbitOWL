@@ -36,12 +36,83 @@ ws ::= [ \t\n\r]{0,8}
 '''.strip()
 
 
+def grammar_rules():
+    return dict(line.split(" ::= ", 1) for line in GRAMMAR.splitlines())
+
+
+def render_grammar(rules):
+    return "\n".join(f"{name} ::= {rule}" for name, rule in rules.items())
+
+
+def json_fields(*fields):
+    return " comma ".join(f"{json.dumps(json.dumps(key))} sep {rule}" for key, rule in fields)
+
+
+def json_object(*fields):
+    return '"{" ws ' + json_fields(*fields) + ' ws "}"'
+
+
+def choices(values):
+    return " | ".join(json.dumps(json.dumps(value)) for value in sorted(values))
+
+
+def allowed_relation(kind, source, target):
+    if kind == "subclass":
+        return source == target == "class"
+    if kind == "type":
+        return source != "class" and target == "class"
+    if kind == "relation":
+        return (source == "class") == (target == "class")
+    return kind in PREDICATES and source == "procedure" and target != "class"
+
+
+def entity_grammar():
+    rules = grammar_rules()
+    rules["root"] = 'ws ' + json_object(("entities", "entities")) + ' ws'
+    return render_grammar(rules)
+
+
+def fact_grammar(entities):
+    entities = {row["id"]: row["kind"] for row in entities}
+    rules = grammar_rules()
+    rules["root"] = 'ws ' + json_object(
+        ("relations", "relations"), ("attributes", "attributes"), ("unresolved", "unresolved"),
+    ) + ' ws'
+    rules["unresolved"] = '"[" ws ( quote (comma quote){0,11} )? ws "]"'
+    rules.pop("complete")
+    combinations = []
+    for source_kind in sorted(set(entities.values())):
+        sources = [key for key, kind in entities.items() if kind == source_kind]
+        for kind in sorted(RELATION_KINDS):
+            targets = [key for key, target_kind in entities.items() if allowed_relation(kind, source_kind, target_kind)]
+            if targets:
+                combinations.append(json_object(
+                    ("source", f"({choices(sources)})"), ("kind", choices([kind])),
+                    ("label", "short"), ("target", f"({choices(targets)})"), ("quote", "quote"),
+                ))
+    if combinations:
+        rules["relation"] = " | ".join(combinations)
+    else:
+        rules["relations"] = '"[" ws "]"'
+        rules.pop("relation")
+    if entities:
+        rules["attribute"] = rules["attribute"].replace("sep key", f"sep ({choices(entities)})", 1)
+    else:
+        rules["attributes"] = '"[" ws "]"'
+        rules.pop("attribute")
+    return render_grammar(rules)
+
+
 def clean(value):
     return " ".join(unicodedata.normalize("NFC", value).split())
 
 
 def identity(value):
     return unicodedata.normalize("NFKC", clean(value)).casefold()
+
+
+def entity_key(row):
+    return row['kind'], identity(row['label']), identity(row['scope'])
 
 
 def validate_section(data, source):
@@ -95,10 +166,7 @@ def validate_section(data, source):
         if (kind not in RELATION_KINDS or len(relation["label"]) > 120
                 or (kind == "relation" and not clean(relation["label"]))):
             raise ServiceError("section_relation_fields_invalid")
-        if ((kind == "subclass" and (source_kind, target_kind) != ("class", "class"))
-                or (kind == "type" and not (source_kind != "class" and target_kind == "class"))
-                or (kind == "relation" and (source_kind == "class") != (target_kind == "class"))
-                or (kind in PREDICATES and (source_kind != "procedure" or target_kind == "class"))):
+        if not allowed_relation(kind, source_kind, target_kind):
             raise ServiceError("section_relation_types_invalid", details={
                 **location, "relation_kind": kind, "source_kind": source_kind,
                 "target_kind": target_kind,

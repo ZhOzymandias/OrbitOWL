@@ -10,14 +10,14 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from supernova import PROTOCOL
-from supernova.api import Application
-from supernova.artifacts import normalize
-from supernova.contracts import ServiceError, canonical, sha256, validate_bundle
-from supernova.documents import extract
-from supernova.runtime import SECTION_OUTPUT_TOKENS, NativeRuntime
-from supernova.store import Store
-from supernova.worker import run_once
+from orbitowl import PROTOCOL
+from orbitowl.api import Application
+from orbitowl.artifacts import normalize
+from orbitowl.contracts import ServiceError, canonical, sha256, validate_bundle
+from orbitowl.documents import extract
+from orbitowl.runtime import SECTION_OUTPUT_TOKENS, NativeRuntime
+from orbitowl.store import Store
+from orbitowl.worker import run_once
 
 TOKEN = 'test-'+'a'*40
 

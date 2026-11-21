@@ -1,5 +1,5 @@
 *
-!requirements.supernova.lock
-!supernova/
-!supernova/**
-supernova/**/__pycache__/
+!requirements.orbitowl.lock
+!orbitowl/
+!orbitowl/**
+orbitowl/**/__pycache__/

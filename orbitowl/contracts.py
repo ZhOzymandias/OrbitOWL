@@ -9,8 +9,8 @@ from pathlib import PurePosixPath
 
 from . import PROTOCOL
 
-MAX_BYTES = 64 * 1024 * 1024
-MAX_FILES = 64
+MAX_BYTES = 256 * 1024 * 1024
+MAX_FILES = 256
 
 
 class ServiceError(Exception):
@@ -47,7 +47,7 @@ def validate_bundle(data):
             if (len(entries) > MAX_FILES+1 or len(names) != len(set(names))
                     or 'manifest.json' not in names or sum(e.file_size for e in entries) > MAX_BYTES
                     or any(e.flag_bits & 1 for e in entries)
-                    or archive.getinfo('manifest.json').file_size > 131072):
+                    or archive.getinfo('manifest.json').file_size > 262144):
                 raise ServiceError('invalid_bundle')
             manifest = json.loads(archive.read('manifest.json'))
             if set(manifest) != {'protocol', 'build_id', 'snapshot_id', 'documents'}:

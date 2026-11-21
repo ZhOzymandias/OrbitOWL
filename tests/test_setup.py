@@ -2,9 +2,9 @@ import os
 
 import pytest
 
+from orbitowl.contracts import validate_bundle
 from scripts.client import make_bundle
 from scripts.setup import initialize
-from supernova.contracts import validate_bundle
 
 
 def test_setup_creates_private_independent_configuration_and_preserves_it(tmp_path):

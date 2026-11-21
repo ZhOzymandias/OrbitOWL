@@ -10,8 +10,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from supernova import PROTOCOL
-from supernova.contracts import (
+from orbitowl import PROTOCOL
+from orbitowl.contracts import (
     MAX_BYTES,
     MAX_FILES,
     ServiceError,
@@ -28,7 +28,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 def make_bundle(files):
     if not 1 <= len(files) <= MAX_FILES or sum(p.stat().st_size for p in files) > MAX_BYTES:
-        raise ValueError("Provide 1 to 64 documents; total size must be at most 64 MiB.")
+        raise ValueError(
+            f"Provide 1 to {MAX_FILES} documents; total size must be at most {MAX_BYTES // (1024 * 1024)} MiB."
+        )
     key = str(uuid.uuid4())
     manifest = {"protocol": PROTOCOL, "build_id": key, "snapshot_id": str(uuid.uuid4()), "documents": []}
     output = io.BytesIO()

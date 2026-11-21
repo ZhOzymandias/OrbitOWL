@@ -7,7 +7,7 @@ from rdflib import OWL, RDF, RDFS, Graph, URIRef
 
 from .contracts import ServiceError
 
-MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 
 
 def repair_mixed_subclass(text, root, namespaces):

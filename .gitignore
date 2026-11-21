@@ -1,5 +1,4 @@
 .orbitowl/
-.supernova
 .env
 secrets/
 *.owl

@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
 
+from orbitowl.contracts import ServiceError, identifier
 from scripts.client import NoRedirect
-from supernova.contracts import ServiceError, identifier
 
 TROOPER_API = "https://james.trooper.ai"
 TERMINAL = {"completed", "failed"}

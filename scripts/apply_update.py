@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Apply the local main checkout to the existing Compose project once it is idle."""
 
-import fcntl
 import json
 import os
 import sqlite3
@@ -76,7 +75,8 @@ def apply(checkout):
     mounts = {m["target"]: Path(m["source"]) for m in api["volumes"]}
     database = mounts["/data"] / "jobs.sqlite3"
     token = mounts["/run/secrets/orbitowl_token"].read_text().strip()
-    port = int(api["environment"]["SUPERNOVA_API_PORT"])
+    env_map = api["environment"]
+    port = int(env_map.get("ORBITOWL_API_PORT") or env_map["SUPERNOVA_API_PORT"])
     if not idle(database):
         print("OrbitOWL: aggiornamento in attesa, coda occupata.", flush=True)
         return
@@ -145,6 +145,8 @@ def apply(checkout):
 
 
 if __name__ == "__main__":
+    import fcntl
+
     STATE.mkdir(mode=0o700, exist_ok=True)
     with (STATE / "update.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

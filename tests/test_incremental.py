@@ -1,9 +1,9 @@
 from rdflib import OWL, RDF, RDFS, SKOS, Graph, Literal, Namespace
 
-from supernova.incremental import build_incremental
+from orbitowl.incremental import build_incremental
 
 
-def test_document_updates_reuse_extraction_and_keep_rule_scopes(tmp_path):
+def test_document_updates_reuse_extraction_and_unify_entities_preserving_scopes(tmp_path):
     iri = 'urn:test:manual'
     ns = Namespace(iri + '#')
     first = 'La Random Access Memory è volatile.'
@@ -51,7 +51,9 @@ def test_document_updates_reuse_extraction_and_keep_rule_scopes(tmp_path):
     memory, = graph.subjects(SKOS.altLabel, Literal('RAM'))
     assert (memory, RDF.type, OWL.Class) in graph
     assert (memory, RDFS.label, Literal('Random Access Memory')) in original
-    assert len(set(graph.subjects(RDFS.label, Literal('Verifica')))) == 2
+    # Unified canonical entity across documents, keeping both pc:ambito annotations.
+    verifica, = graph.subjects(RDFS.label, Literal('Verifica'))
+    assert set(graph.objects(verifica, ns.ambito)) == {Literal('manual'), Literal('supplement')}
     sources = {str(v) for v in graph.objects(None, ns.fonte)}
     assert any(source.startswith('doc=manual; page=1;') for source in sources)
     assert any(source.startswith('doc=supplement; page=1;') for source in sources)
@@ -65,8 +67,8 @@ def test_document_updates_reuse_extraction_and_keep_rule_scopes(tmp_path):
 
 
 def test_cli_preserves_document_ids_when_adding_files(tmp_path):
+    from orbitowl.contracts import validate_bundle
     from scripts.client import make_bundle
-    from supernova.contracts import validate_bundle
 
     first, second = tmp_path / 'first.txt', tmp_path / 'second.txt'
     first.write_text('First document.')

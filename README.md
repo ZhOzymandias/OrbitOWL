@@ -122,8 +122,8 @@ Il primo comando verifica i checkpoint senza inferenza. Il secondo
 rimette il job in coda se ritrova almeno le sezioni già completate.
 
 ```bash
-sudo docker compose exec -T worker python -m supernova.worker --check-resume ID_JOB
-sudo docker compose exec -T worker python -m supernova.worker --resume ID_JOB
+sudo docker compose exec -T worker python -m orbitowl.worker --check-resume ID_JOB
+sudo docker compose exec -T worker python -m orbitowl.worker --resume ID_JOB
 ```
 
 OrbitOWL pubblica l'OWL finale dopo l'ultimo documento. Per i job integrati,
@@ -141,12 +141,12 @@ runner con un solo slot, evita di avviare contemporaneamente due generazioni.
 
 ## Sviluppo
 
-Il prompt è in [supernova/section_prompt.txt](supernova/section_prompt.txt).
+Il prompt è in [orbitowl/section_entities_prompt.txt](orbitowl/section_entities_prompt.txt) e [orbitowl/section_facts_prompt.txt](orbitowl/section_facts_prompt.txt).
 Il ramo di lavoro è `main`; non creare altri rami senza richiesta esplicita.
 
 Con Python 3.12:
 
 ```bash
-python3 -m pip install -r requirements.supernova.lock pytest
+python3 -m pip install -r requirements.orbitowl.lock pytest
 python3 -m pytest -q
 ```

@@ -7,14 +7,20 @@ import pytest
 from rdflib import OWL, RDF, Graph, Namespace
 from test_service import package, packed, pdf_bytes
 
-from supernova.compiler import compile_owl
-from supernova.contracts import ServiceError, canonical, sha256
-from supernova.documents import extract
-from supernova.pipeline import atomic_json, build_ontology, sections, split, split_offsets
-from supernova.runtime import NativeRuntime
-from supernova.section_schema import LIMITS, validate_section
-from supernova.store import Store
-from supernova.worker import main, run_once
+from orbitowl.compiler import compile_owl
+from orbitowl.contracts import ServiceError, canonical, sha256
+from orbitowl.documents import extract
+from orbitowl.pipeline import (
+    atomic_json,
+    build_ontology,
+    sections,
+    split,
+    split_offsets,
+)
+from orbitowl.runtime import NativeRuntime
+from orbitowl.section_schema import LIMITS, fact_grammar, validate_section
+from orbitowl.store import Store
+from orbitowl.worker import main, run_once
 
 
 def structured(quote, scope=''):
@@ -108,7 +114,10 @@ def test_output_limit_splits_only_the_failed_section_and_keeps_scopes(tmp_path):
     assert runner.calls == {1: 1, 2: 3}
     assert report['sections_completed'] == 3 and report['sections_split'] == 1
     graph = Graph().parse(data=xml, format='xml')
-    assert len(set(graph.subjects(RDF.type, OWL.NamedIndividual))) == 4
+    ns = Namespace(iri + '#')
+    # Entities unify across sections while retaining every pc:ambito annotation.
+    assert len(set(graph.subjects(RDF.type, OWL.NamedIndividual))) == 2
+    assert {str(v) for v in graph.objects(None, ns.ambito)} == {'1', '2'}
     again = build_ontology(runner, docs, tmp_path, lambda update: None, iri=iri)[1]
     assert again['sections_reused'] == 3 and runner.calls == {1: 1, 2: 3}
 
@@ -178,7 +187,7 @@ def test_saturation_has_a_durable_attempt_budget(tmp_path, monkeypatch):
             self.calls += 1
             raise ServiceError('section_capacity_reached', details={'full_lists': {'entities': 14}})
 
-    monkeypatch.setattr('supernova.pipeline.MAX_SECTION_ATTEMPTS', 2)
+    monkeypatch.setattr('orbitowl.pipeline.MAX_SECTION_ATTEMPTS', 2)
     runner = Runner()
     events = []
     text = 'Prima del riavvio controlla i collegamenti. ' * 13
@@ -218,7 +227,7 @@ def test_invalid_fact_is_rejected_without_splitting(tmp_path, invalid_kind):
     text = 'Riavvio dopo la verifica. La procedura termina al completamento della verifica.'
     rejected = structured('Riavvio dopo la verifica.' if invalid_kind else 'Citazione estranea.')
     if invalid_kind:
-        rejected['entities'][1]['kind'] = 'class'
+        rejected['entities'][0]['kind'] = 'individual'
     code = 'section_relation_types_invalid' if invalid_kind else 'section_quote_not_found'
 
     class Runner:
@@ -240,6 +249,7 @@ def test_invalid_fact_is_rejected_without_splitting(tmp_path, invalid_kind):
     ('structured-sections-1.3', 'section_attempt_budget_exhausted'),
     ('structured-sections-1.4', 'section_attempt_budget_exhausted'),
     ('structured-sections-1.6.1', 'section_quote_not_found'),
+    ('structured-sections-1.6.2', 'section_attempt_budget_exhausted'),
 ])
 def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, capsys, previous_revision, failure):
     text = 'Riavvio dopo la verifica. Completa la verifica prima del riavvio.'
@@ -266,9 +276,9 @@ def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, c
     atomic_json(right_dir/'validated.json', structured('citazione estranea al testo'))
     previous_report = {'pipeline_revision': previous_revision, 'sections_completed': 2}
     store.update(key, status='failed', error=failure, report=previous_report)
-    monkeypatch.setenv('SUPERNOVA_DATA', str(tmp_path))
+    monkeypatch.setenv('ORBITOWL_DATA', str(tmp_path))
     monkeypatch.setenv('ORBITOWL_MODEL', runtime.model)
-    monkeypatch.setenv('SUPERNOVA_CONTEXT', str(runtime.context))
+    monkeypatch.setenv('ORBITOWL_CONTEXT', str(runtime.context))
     monkeypatch.setattr(sys, 'argv', ['worker', '--check-resume', key])
     main()
     preview = json.loads(capsys.readouterr().out)
@@ -300,3 +310,125 @@ def test_resumes_job_and_revalidates_legacy_checkpoints(tmp_path, monkeypatch, c
     assert result['status'] == 'completed'
     assert result['report']['sections_reused'] == 1
     assert result['report']['sections_completed'] == 2
+
+
+def test_quarantine_skips_one_bad_section_and_completes_corpus(tmp_path):
+    class Runner:
+        signature = 'quarantine-test'
+
+        def generate_section(self, section, directory, progress):
+            if section['page'] == 2:
+                raise ServiceError('section_attribute_value_invalid')
+            return structured(section['text'])
+
+    sources = [{
+        'document_id': str(uuid.uuid4()),
+        'filename': 'manual.txt',
+        'pages': [
+            {'number': 1, 'text': 'Controllo pagina uno.'},
+            {'number': 2, 'text': 'Tabella corrotta pagina due.'},
+            {'number': 3, 'text': 'Controllo pagina tre.'},
+            {'number': 4, 'text': 'Controllo pagina quattro.'},
+        ],
+    }]
+    xml, report = build_ontology(Runner(), sources, tmp_path, lambda _: None, iri='urn:test:quarantine')
+    assert report['sections_completed'] == 3
+    assert report['sections_skipped'] == 1
+    assert (tmp_path / 'skipped-sections.json').is_file()
+    graph = Graph().parse(data=xml, format='xml')
+    assert len(set(graph.subjects(RDF.type, OWL.NamedIndividual))) == 2
+
+
+def test_operational_relations_on_classes_and_typed_attribute_grammar():
+    quote = 'Ogni intervento hardware richiede un bracciale ESD.'
+    data = {
+        'status': 'complete',
+        'entities': [
+            {'id': 'c1', 'kind': 'class', 'label': 'Intervento Hardware', 'scope': ''},
+            {'id': 'c2', 'kind': 'class', 'label': 'Bracciale ESD', 'scope': ''},
+            {'id': 'p1', 'kind': 'procedure', 'label': 'Sostituzione SSD', 'scope': ''},
+        ],
+        'relations': [
+            {'source': 'c1', 'kind': 'prerequisite', 'label': '', 'target': 'c2', 'quote': quote},
+            {'source': 'p1', 'kind': 'prerequisite', 'label': '', 'target': 'c2', 'quote': quote},
+        ],
+        'attributes': [],
+    }
+    validate_section(data, quote)
+    iri = 'urn:test:class-ops'
+    xml, counts = compile_owl(iri, [({'document_id': 'doc1', 'page': 1}, data)])
+    assert counts['operational_relations'] == 2
+    graph = Graph().parse(data=xml, format='xml')
+    assert len(set(graph.subjects(RDF.type, OWL.Restriction))) == 2
+    grammar = fact_grammar(data['entities'], {'p1': quote})
+    assert 'int_val' in grammar and 'dec_val' in grammar and 'bool_val' in grammar
+    assert 'short_nonempty' in grammar
+
+
+def test_pdf_with_blank_page_is_extracted_instead_of_failing():
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=600, height=800)  # Blank cover / diagram page
+    page2 = writer.add_blank_page(width=600, height=800)
+    stream = DecodedStreamObject()
+    stream.set_data(b'BT /F1 12 Tf 30 700 Td (CONTENUTO PAGINA DUE) Tj ET')
+    page2[NameObject('/Contents')] = stream
+    page2[NameObject('/Resources')] = DictionaryObject({NameObject('/Font'): DictionaryObject({
+        NameObject('/F1'): DictionaryObject({NameObject('/Type'): NameObject('/Font'),
+        NameObject('/Subtype'): NameObject('/Type1'), NameObject('/BaseFont'): NameObject('/Helvetica')})})})
+    import io
+    buf = io.BytesIO()
+    writer.write(buf)
+    archive, _ = package(content=buf.getvalue())
+    _, sources = extract(archive)
+    assert sources[0]['empty_pages'] == 1
+    assert len(sources[0]['pages']) == 1
+    assert sources[0]['pages'][0]['number'] == 2
+    assert 'CONTENUTO PAGINA DUE' in sources[0]['pages'][0]['text']
+
+
+def test_unresolved_triggers_one_shot_entity_recovery_before_splitting(tmp_path):
+    import httpx
+
+    calls = []
+
+    def transport(request):
+        body = json.loads(request.content)
+        if request.url.path == '/tokenize':
+            return httpx.Response(200, json={'tokens': [1, 2, 3]})
+        calls.append(body)
+        if len(calls) == 1:
+            # Initial entities miss the prerequisite entity.
+            text = json.dumps({'entities': [
+                {'id': 'p1', 'kind': 'procedure', 'label': 'Riavvio', 'scope': ''},
+            ]})
+        elif len(calls) == 2:
+            # First facts call flags p1 as unresolved.
+            text = json.dumps({'relations': [], 'attributes': [], 'unresolved': ['p1']})
+        elif len(calls) == 3:
+            # Recovery call extracts the missing entity.
+            text = json.dumps({'entities': [
+                {'id': 'r1', 'kind': 'individual', 'label': 'Verifica', 'scope': ''},
+            ]})
+        else:
+            # Retry facts succeeds cleanly!
+            text = json.dumps({
+                'relations': [{'source': 'p1', 'kind': 'prerequisite', 'label': '', 'target': 'r1', 'quote': 'p1'}],
+                'attributes': [],
+                'unresolved': [],
+            })
+        events = [
+            {'content': text},
+            {'stop': True, 'stop_type': 'eos', 'truncated': False,
+             'generation_settings': {'grammar': body['grammar']}},
+        ]
+        return httpx.Response(200, content=''.join('data: ' + json.dumps(e) + '\n\n' for e in events))
+
+    runtime = NativeRuntime('http://runner', transport=httpx.MockTransport(transport))
+    data = runtime.generate_section({'text': 'Prima del riavvio eseguire la verifica.'}, tmp_path, lambda _: None)
+    assert len(calls) == 4
+    assert len(data['entities']) == 2
+    assert len(data['relations']) == 1
+

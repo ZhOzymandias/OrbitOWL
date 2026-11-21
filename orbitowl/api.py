@@ -15,8 +15,16 @@ from .store import Store
 
 
 def read_token():
-    path = os.getenv('SUPERNOVA_TOKEN_FILE', '')
+    path = os.getenv('ORBITOWL_TOKEN_FILE') or os.getenv('SUPERNOVA_TOKEN_FILE', '')
     return Path(path).read_text().strip() if path else ''
+
+
+def _data_dir():
+    return os.getenv('ORBITOWL_DATA') or os.getenv('SUPERNOVA_DATA', '/data')
+
+
+def _runner_url():
+    return os.getenv('ORBITOWL_RUNNER_URL') or os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081')
 
 
 class Application:
@@ -51,10 +59,10 @@ class Application:
                         ready = self.ready()
                     else:
                         async with httpx.AsyncClient(timeout=5) as client:
-                            response = await client.get(os.getenv('SUPERNOVA_RUNNER_URL', 'http://127.0.0.1:18081')+'/health')
+                            response = await client.get(_runner_url()+'/health')
                             ready = response.status_code == 200
                     if self.ready is None:
-                        heartbeat = Path(os.getenv('SUPERNOVA_DATA', '/data'))/'worker-heartbeat'
+                        heartbeat = Path(_data_dir())/'worker-heartbeat'
                         revision = heartbeat.with_name('worker-revision')
                         ready = (ready and heartbeat.is_file() and time.time()-heartbeat.stat().st_mtime < 60
                                  and revision.is_file() and revision.read_text() == SERVICE_REVISION)
@@ -62,7 +70,7 @@ class Application:
                         raise ServiceError('model_not_ready', 503)
                     payload = {'status': 'ready', 'service_revision': SERVICE_REVISION}
                 else:
-                    store = self.store or Store(os.getenv('SUPERNOVA_DATA', '/data'))
+                    store = self.store or Store(_data_dir())
                     parts = path.strip('/').split('/')
                     if parts == ['v1', 'ontology-jobs'] and method == 'POST':
                         if headers.get(b'content-type', b'').split(b';')[0] != b'application/zip':

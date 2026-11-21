@@ -11,11 +11,11 @@ x-app: &app
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   environment:
-    SUPERNOVA_DATA: /data
-    SUPERNOVA_TOKEN_FILE: /run/secrets/orbitowl_token
-    SUPERNOVA_API_PORT: "${ORBITOWL_PORT:-8110}"
-    SUPERNOVA_RUNNER_URL: "${ORBITOWL_RUNNER_URL:-http://127.0.0.1:18081}"
-    SUPERNOVA_CONTEXT: "${ORBITOWL_CONTEXT:-65536}"
+    ORBITOWL_DATA: /data
+    ORBITOWL_TOKEN_FILE: /run/secrets/orbitowl_token
+    ORBITOWL_API_PORT: "${ORBITOWL_PORT:-8110}"
+    ORBITOWL_RUNNER_URL: "${ORBITOWL_RUNNER_URL:-http://127.0.0.1:18081}"
+    ORBITOWL_CONTEXT: "${ORBITOWL_CONTEXT:-65536}"
     ORBITOWL_MODEL: "${ORBITOWL_MODEL:-qwen3.8:27b}"
   volumes:
     - type: bind
@@ -36,11 +36,11 @@ services:
     <<: *app
     image: "${ORBITOWL_API_IMAGE:-orbitowl:local}"
     healthcheck:
-      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['SUPERNOVA_API_PORT'] + '/health/live', timeout=5)"]
+      test: [CMD, python, -c, "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['ORBITOWL_API_PORT'] + '/health/live', timeout=5)"]
       interval: 15s
       timeout: 6s
       retries: 3
   worker:
     <<: *app
     image: "${ORBITOWL_WORKER_IMAGE:-orbitowl:local}"
-    command: [python, -m, supernova.worker]
+    command: [python, -m, orbitowl.worker]

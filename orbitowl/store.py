@@ -102,8 +102,14 @@ class Store:
             if row is None:
                 raise ServiceError('job_not_found', 404)
             revision = json.loads(row['report']).get('pipeline_revision')
-            recoverable = {'section_attempt_budget_exhausted', 'section_correction_failed'}
-            if revision == 'structured-sections-1.6.1':
+            recoverable = {
+                'section_attempt_budget_exhausted',
+                'section_correction_failed',
+                'section_facts_unresolved',
+                'section_attribute_value_invalid',
+                'too_many_skipped_sections',
+            }
+            if revision in {'structured-sections-1.6.1', 'structured-sections-1.6.2'}:
                 recoverable.add('section_quote_not_found')
             if (row['status'] != 'failed' or row['error'] not in recoverable
                     or row['cancel_requested'] or row['artifact_sha256']

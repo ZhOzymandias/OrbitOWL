@@ -28,7 +28,7 @@ def server(monkeypatch, tmp_path):
             return {"branch": "main", "rev-parse": "a" * 40, "status": ""}[args[3]]
         if "config" in args:
             return json.dumps({"services": {"api": {
-                "environment": {"SUPERNOVA_API_PORT": "8119"},
+                "environment": {"ORBITOWL_API_PORT": "8119"},
                 "volumes": [{"target": "/data", "source": str(config)},
                             {"target": "/run/secrets/orbitowl_token", "source": str(token)}],
             }}})

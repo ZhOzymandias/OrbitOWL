@@ -18,7 +18,12 @@ from orbitowl.pipeline import (
     split_offsets,
 )
 from orbitowl.runtime import NativeRuntime
-from orbitowl.section_schema import LIMITS, fact_grammar, validate_section
+from orbitowl.section_schema import (
+    LIMITS,
+    entity_grammar,
+    fact_grammar,
+    validate_section,
+)
 from orbitowl.store import Store
 from orbitowl.worker import main, run_once
 
@@ -361,8 +366,19 @@ def test_operational_relations_on_classes_and_typed_attribute_grammar():
     graph = Graph().parse(data=xml, format='xml')
     assert len(set(graph.subjects(RDF.type, OWL.Restriction))) == 2
     grammar = fact_grammar(data['entities'], {'p1': quote})
-    assert 'int_val' in grammar and 'dec_val' in grammar and 'bool_val' in grammar
-    assert 'short_nonempty' in grammar
+    assert 'int-val' in grammar and 'dec-val' in grammar and 'bool-val' in grammar
+    assert 'short-nonempty' in grammar
+    # llama.cpp GBNF rule names only allow [a-zA-Z0-9-] (underscores cause HTTP 400).
+    import re
+    for g in (entity_grammar(), grammar):
+        for line in g.splitlines():
+            name, _, rhs = line.partition(' ::= ')
+            assert re.fullmatch(r'[a-zA-Z0-9-]+', name), f'Invalid GBNF rule name: {name}'
+            assert rhs.strip(), f'Empty GBNF rule: {name}'
+            # Strip quoted literals and character classes; ensure no non-terminal contains '_'.
+            stripped = re.sub(r'"(?:\\.|[^"\\])*"', ' ', rhs)
+            stripped = re.sub(r'\[(?:\\.|[^\]\\])*\]', ' ', stripped)
+            assert '_' not in stripped, f'Underscore in GBNF non-terminal: {line}'
 
 
 def test_pdf_with_blank_page_is_extracted_instead_of_failing():

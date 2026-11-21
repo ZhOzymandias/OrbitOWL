@@ -186,7 +186,15 @@ def extract_sections(runtime, sources, directory, progress, *, previous_signatur
                 return runtime.generate_section(section, folder, progress)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code < 500 and exc.response.status_code != 429:
-                    raise ServiceError("section_runner_rejected") from exc
+                    detail = ""
+                    try:
+                        detail = exc.response.read().decode("utf-8", errors="replace").strip()[:300]
+                    except (httpx.HTTPError, RuntimeError, ValueError):
+                        detail = ""
+                    raise ServiceError(
+                        "section_runner_rejected",
+                        details={"http_status": exc.response.status_code, "runner_error": detail},
+                    ) from exc
                 error = ServiceError("section_transport_error")
             except httpx.HTTPError:
                 error = ServiceError("section_transport_error")

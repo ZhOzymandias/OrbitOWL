@@ -281,6 +281,8 @@ class NativeRuntime:
                 (directory / "response.json.part").open("w", encoding="utf-8") as raw,
                 client.stream("POST", "/completion", json=body) as response,
             ):
+                if response.status_code >= 400:
+                    response.read()
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line.startswith("data:") or line[5:].strip() == "[DONE]":

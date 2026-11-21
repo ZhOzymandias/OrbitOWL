@@ -42,15 +42,15 @@ complete ::= "{" ws "\"status\"" sep "\"complete\"" comma "\"entities\"" sep ent
 entities ::= "[" ws ( entity (comma entity){0,31} )? ws "]"
 relations ::= "[" ws ( relation (comma relation){0,31} )? ws "]"
 attributes ::= "[" ws ( attribute (comma attribute){0,23} )? ws "]"
-entity ::= "{" ws "\"id\"" sep key comma "\"kind\"" sep ("\"class\"" | "\"individual\"" | "\"procedure\"") comma "\"label\"" sep short_nonempty comma "\"scope\"" sep short ws "}"
+entity ::= "{" ws "\"id\"" sep key comma "\"kind\"" sep ("\"class\"" | "\"individual\"" | "\"procedure\"") comma "\"label\"" sep short-nonempty comma "\"scope\"" sep short ws "}"
 relation ::= "{" ws "\"source\"" sep key comma "\"kind\"" sep ("\"subclass\"" | "\"type\"" | "\"relation\"" | "\"prerequisite\"" | "\"condition\"" | "\"exception\"") comma "\"label\"" sep short comma "\"target\"" sep key comma "\"quote\"" sep quote ws "}"
-attribute ::= "{" ws "\"source\"" sep key comma "\"label\"" sep short_nonempty comma "\"type\"" sep ("\"text\"" | "\"integer\"" | "\"decimal\"" | "\"boolean\"") comma "\"value\"" sep short_nonempty comma "\"quote\"" sep quote ws "}"
+attribute ::= "{" ws "\"source\"" sep key comma "\"label\"" sep short-nonempty comma "\"type\"" sep ("\"text\"" | "\"integer\"" | "\"decimal\"" | "\"boolean\"") comma "\"value\"" sep short-nonempty comma "\"quote\"" sep quote ws "}"
 key ::= "\"" [a-z] [a-z0-9_]{0,15} "\""
 short ::= "\"" char{0,120} "\""
-short_nonempty ::= "\"" char{1,120} "\""
-int_val ::= "\"" [+-]? [0-9]{1,24} "\""
-dec_val ::= "\"" [+-]? [0-9]{1,24} ("." [0-9]{1,12})? "\""
-bool_val ::= "\"true\"" | "\"false\""
+short-nonempty ::= "\"" char{1,120} "\""
+int-val ::= "\"" ("+" | "-")? [0-9]{1,24} "\""
+dec-val ::= "\"" ("+" | "-")? [0-9]{1,24} ("." [0-9]{1,12})? "\""
+bool-val ::= "\"true\"" | "\"false\""
 quote ::= "\"" char{1,360} "\""
 char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})
 comma ::= ws "," ws
@@ -180,7 +180,7 @@ def fact_grammar(entities, passages=None):
                 if allowed_relation(kind, source_kind, target_kind)
             ]
             if targets:
-                label_rule = "short_nonempty" if kind == "relation" else choices([""])
+                label_rule = "short-nonempty" if kind == "relation" else choices([""])
                 combinations.append(
                     json_object(
                         ("source", f"({choices(sources)})"),
@@ -200,23 +200,23 @@ def fact_grammar(entities, passages=None):
         typed_attrs = [
             json_object(
                 ("source", ent_choices),
-                ("label", "short_nonempty"),
+                ("label", "short-nonempty"),
                 ("type", choices([typ])),
                 ("value", val_rule),
                 ("quote", "quote"),
             )
             for typ, val_rule in (
-                ("text", "short_nonempty"),
-                ("integer", "int_val"),
-                ("decimal", "dec_val"),
-                ("boolean", "bool_val"),
+                ("text", "short-nonempty"),
+                ("integer", "int-val"),
+                ("decimal", "dec-val"),
+                ("boolean", "bool-val"),
             )
         ]
         rules["attribute"] = " | ".join(typed_attrs)
     else:
         rules["attributes"] = '"[" ws "]"'
         rules.pop("attribute")
-    if passages is not None:
+    if passages:
         rules["quote"] = choices(passages)
     return render_grammar(rules)
 

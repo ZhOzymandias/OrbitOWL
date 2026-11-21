@@ -3,6 +3,7 @@
 import argparse
 import json
 import time
+from subprocess import run
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
@@ -16,14 +17,44 @@ ACTIVE = {"queued", "running"}
 POLL_SECONDS = 15
 
 
-def request_json(url, token, payload=None):
+def request_json(url, token):
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    data = None
-    if payload is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode()
-    with build_opener(NoRedirect()).open(Request(url, data=data, headers=headers), timeout=15) as response:
+    with build_opener(NoRedirect()).open(Request(url, headers=headers), timeout=15) as response:
         return json.load(response)
+
+
+def trooper_request(endpoint, token, payload=None):
+    # Keep credentials on stdin and use the same curl client as Trooper.AI's examples.
+    if any(char.isspace() for char in token):
+        raise ValueError("La chiave Trooper.AI contiene spazi o ritorni a capo.")
+    command = ["curl", "--disable", "--silent", "--max-time", "15", "--header", "@-",
+               "--write-out", "\n%{http_code}"]
+    if payload is not None:
+        command += ["--header", "Content-Type: application/json", "--data-binary", json.dumps(payload)]
+    try:
+        result = run([*command, TROOPER_API + endpoint], input=f"Authorization: Bearer {token}\n",
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except FileNotFoundError as exc:
+        raise ValueError("Installa curl su Pulsar per accedere a Trooper.AI.") from exc
+    if result.returncode:
+        raise ValueError(f"Chiamata a Trooper.AI interrotta (curl {result.returncode}).")
+
+    body, _, status = result.stdout.rpartition("\n")
+    try:
+        response = json.loads(body)
+    except ValueError:
+        response = None
+    if not status.startswith("2"):
+        detail = None
+        if isinstance(response, dict):
+            detail = response.get("error") or response.get("detail") or response.get("message")
+        if isinstance(detail, str):
+            detail = " ".join(detail.replace(token, "[omessa]").split())[:300]
+        hint = f" — {detail}" if detail else ""
+        raise ValueError(f"Trooper.AI ha risposto HTTP {status}{hint}")
+    if response is None:
+        raise ValueError("Trooper.AI non ha restituito una risposta JSON valida.")
+    return response
 
 
 def read_key(path):
@@ -62,12 +93,11 @@ def watch_job(url, job_token, job_id, server_id, trooper_key):
 
     print(f"Invio la richiesta di freeze al server Trooper.AI {server_id}.", flush=True)
     try:
-        response = request_json(f"{TROOPER_API}/api/order-status", trooper_key, {
+        response = trooper_request("/api/order-status", trooper_key, {
             "serverId": server_id, "desired_status": "frozen", "migration_allowed": False,
         })
-    except (URLError, TimeoutError, ValueError) as exc:
-        hint = f" (HTTP {exc.code})" if isinstance(exc, HTTPError) else ""
-        raise ValueError(f"Freeze non confermato{hint}. Verifica lo stato nella dashboard Trooper.AI.") from exc
+    except ValueError as exc:
+        raise ValueError(f"Freeze non confermato. {exc} Verifica la dashboard Trooper.AI.") from exc
     if not isinstance(response, dict) or response.get("success") is not True:
         raise ValueError("Trooper.AI non ha confermato il freeze. Verifica la dashboard.")
     print("Richiesta di freeze accettata da Trooper.AI.", flush=True)
@@ -88,7 +118,9 @@ def main():
     try:
         key = read_key(args.trooper_key_file)
         if args.command == "list-servers":
-            servers = request_json(f"{TROOPER_API}/api/orders", key)
+            servers = trooper_request("/api/orders", key)
+            if isinstance(servers, dict) and servers.get("success") is True:
+                servers = servers.get("servers")
             if not isinstance(servers, list):
                 raise ValueError("Risposta del catalogo server inattesa.")
             for server in servers:
